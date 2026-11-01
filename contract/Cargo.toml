@@ -1,5 +1,5 @@
 [package]
-name = "atomicguard"
+name = "banbo"
 version = "0.1.0"
 edition = "2021"
 description = "NEAR vault that lets AI agents spend under contract-enforced limits"

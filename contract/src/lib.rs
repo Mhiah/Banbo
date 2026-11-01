@@ -1,4 +1,4 @@
-//! AtomicGuard: a NEAR vault that lets AI agents spend from a shared treasury
+//! Banbo: a NEAR vault that lets AI agents spend from a shared treasury
 //! without ever holding the treasury's keys.
 //!
 //! Every payment goes through `request_payment`, which checks the policy
@@ -116,7 +116,7 @@ pub struct Balances {
 
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
-pub struct AtomicGuard {
+pub struct Banbo {
     owner: AccountId,
     paused: bool,
     period_ms: u64,
@@ -136,7 +136,7 @@ pub struct AtomicGuard {
 
 fn event(kind: &str, data: String) {
     log!(
-        "EVENT_JSON:{{\"standard\":\"atomicguard\",\"version\":\"1.0.0\",\"event\":\"{}\",\"data\":[{}]}}",
+        "EVENT_JSON:{{\"standard\":\"banbo\",\"version\":\"1.0.0\",\"event\":\"{}\",\"data\":[{}]}}",
         kind,
         data
     );
@@ -147,7 +147,7 @@ fn esc(s: &str) -> String {
 }
 
 #[near]
-impl AtomicGuard {
+impl Banbo {
     #[init]
     pub fn new(owner: AccountId, period_ms: u64, shared_cap: U128) -> Self {
         require!(period_ms > 0, "period_ms must be > 0");

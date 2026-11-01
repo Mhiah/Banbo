@@ -45,9 +45,9 @@ fn callback_ctx(ok: bool, balance_near: u128, ts_ms: u64) {
 /// 10 NEAR vault, 5 NEAR shared daily cap, three agents with
 /// 0.5 NEAR per request, 3 NEAR per agent per day, approval above 0.4 NEAR
 /// for agent3 (others never need approval at their max).
-fn setup() -> AtomicGuard {
+fn setup() -> Banbo {
     ctx(owner(), 10, 1_000);
-    let mut c = AtomicGuard::new(owner(), DAY_MS, U128(5 * NEAR));
+    let mut c = Banbo::new(owner(), DAY_MS, U128(5 * NEAR));
     for n in 1..=3 {
         let threshold = if n == 3 { 4 * NEAR / 10 } else { NEAR };
         c.add_agent(agent(n), U128(NEAR / 2), U128(3 * NEAR), U128(threshold));
@@ -56,12 +56,12 @@ fn setup() -> AtomicGuard {
     c
 }
 
-fn pay(c: &mut AtomicGuard, n: u8, id: &str, to: AccountId, yocto: u128) -> RequestOutcome {
+fn pay(c: &mut Banbo, n: u8, id: &str, to: AccountId, yocto: u128) -> RequestOutcome {
     ctx(agent(n), 10, 2_000);
     c.request_payment(id.into(), to, U128(yocto), None)
 }
 
-fn assert_invariant(c: &AtomicGuard) {
+fn assert_invariant(c: &Banbo) {
     let b = c.get_balances();
     assert!(b.shared_spent.0 + b.shared_reserved.0 <= b.shared_cap.0, "shared invariant broken");
     for (_, a) in c.list_agents() {
@@ -300,7 +300,7 @@ fn pause_and_disable_stop_new_payments() {
 fn vault_balance_is_respected() {
     // Vault holds only 1 NEAR, 0.5 of which is the operating reserve.
     ctx(owner(), 1, 1_000);
-    let mut c = AtomicGuard::new(owner(), DAY_MS, U128(5 * NEAR));
+    let mut c = Banbo::new(owner(), DAY_MS, U128(5 * NEAR));
     c.add_agent(agent(1), U128(NEAR), U128(3 * NEAR), U128(NEAR));
     c.allow_recipient(vendor());
     ctx(agent(1), 1, 2_000);

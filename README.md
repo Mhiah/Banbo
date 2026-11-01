@@ -1,4 +1,4 @@
-# AtomicGuard
+# Banbo
 
 **An agent wallet firewall on NEAR.** AI agents can pay for things from a shared treasury, but they never hold the treasury's keys. Every payment goes through a NEAR contract that enforces the owner's rules, even when the agent has been prompt-injected.
 
@@ -8,7 +8,7 @@ Built at NEAR HACKATHON (Nov 2026). Tracks: **AI Security & Defense**, Agent Eco
 
 Agents read untrusted content all day: web pages, emails, invoices, API responses. One hidden line of text can turn a helpful payments agent into one that sends the treasury to an attacker. Telling the model to be careful isn't a security boundary.
 
-AtomicGuard puts the boundary on-chain:
+Banbo puts the boundary on-chain:
 
 | Attack | What stops it |
 |---|---|
@@ -44,7 +44,7 @@ A transaction log is written to `demo/out/demo-report.json`.
 agent (function-call key: vault.request_payment only)
    │ request_payment(id, recipient, amount, memo)
    ▼
-AtomicGuard contract
+Banbo contract
    1. policy check: agent active, not paused, recipient allowlisted,
       ≤ per-request max, agent + shared budget, vault balance
       └─ fail → returns {outcome: "rejected", reason}, logs event, writes nothing
@@ -75,7 +75,7 @@ A note on concurrency: NEAR executes calls to one contract one at a time, so two
 | `on_payout(key)` | contract only | `#[private]` callback |
 | `get_config`, `get_agent`, `list_agents`, `list_allowlist`, `get_request`, `list_requests`, `get_balances` | view | |
 
-Amounts are yoctoNEAR strings. Events are emitted as NEP-297 logs (`EVENT_JSON:{"standard":"atomicguard",...}`).
+Amounts are yoctoNEAR strings. Events are emitted as NEP-297 logs (`EVENT_JSON:{"standard":"banbo",...}`).
 
 ## Tests
 
@@ -93,7 +93,7 @@ contract/            Rust contract (near-sdk 5)
   src/lib.rs         vault logic
   src/tests.rs       unit tests
   build.sh           wasm build without cargo-near
-  res/               prebuilt atomicguard.wasm (so the demo runs without Rust)
+  res/               prebuilt banbo.wasm (so the demo runs without Rust)
 demo/
   src/vault.js       sandbox setup helpers
   src/agent.js       Claude agent + scripted compromised agent
@@ -107,7 +107,7 @@ docs/THREAT_MODEL.md
 
 ## Building the contract
 
-`contract/res/atomicguard.wasm` is committed. To rebuild (Rust stable with the `wasm32-unknown-unknown` target, and `make setup` first for `wasm-opt`):
+`contract/res/banbo.wasm` is committed. To rebuild (Rust stable with the `wasm32-unknown-unknown` target, and `make setup` first for `wasm-opt`):
 
 ```bash
 make build
