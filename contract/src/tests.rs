@@ -79,7 +79,12 @@ fn injected_drain_to_attacker_is_rejected_and_nothing_moves() {
     // Even a small amount to the attacker is refused.
     let out = pay(&mut c, 1, "inj-2", attacker(), NEAR / 100);
     assert_eq!(out, RequestOutcome::Rejected { reason: "recipient_not_allowlisted".into() });
-    assert!(c.list_requests(None, None).is_empty(), "rejections must not write storage");
+    assert!(c.list_requests(None, None).is_empty(), "rejections never become payment requests");
+    let blocked = c.list_blocked(None);
+    assert_eq!(blocked.len(), 2);
+    assert_eq!(blocked[0].request_id, "inj-2"); // newest first
+    assert_eq!(blocked[1].recipient, attacker());
+    assert_eq!(blocked[1].reason, "recipient_not_allowlisted");
     let b = c.get_balances();
     assert_eq!(b.shared_reserved.0, 0);
     assert_eq!(b.in_flight.0, 0);
@@ -111,6 +116,39 @@ fn unknown_caller_cannot_spend() {
     ctx(attacker(), 10, 2_000);
     let out = c.request_payment("x".into(), vendor(), U128(NEAR / 10), None);
     assert_eq!(out, RequestOutcome::Rejected { reason: "unknown_agent".into() });
+}
+
+#[test]
+fn blocked_log_is_bounded_and_newest_first() {
+    let mut c = setup();
+    for i in 0..120 {
+        pay(&mut c, 1, &format!("spam-{i}"), attacker(), NEAR);
+    }
+    let blocked = c.list_blocked(None);
+    assert_eq!(blocked.len(), 50);
+    assert_eq!(blocked[0].request_id, "spam-119");
+    assert_eq!(blocked[49].request_id, "spam-70");
+    assert_eq!(c.blocked_count(), 120);
+    assert_eq!(c.list_blocked(Some(3)).len(), 3);
+}
+
+#[test]
+fn unknown_callers_are_not_logged() {
+    let mut c = setup();
+    ctx(attacker(), 10, 2_000);
+    c.request_payment("x".into(), vendor(), U128(NEAR / 10), None);
+    assert_eq!(c.blocked_count(), 0);
+}
+
+#[test]
+fn long_memos_are_truncated_in_the_log() {
+    let mut c = setup();
+    ctx(agent(1), 10, 2_000);
+    let memo = "é".repeat(100); // 200 bytes, multi-byte chars
+    c.request_payment("m".into(), attacker(), U128(NEAR), Some(memo));
+    let b = &c.list_blocked(None)[0];
+    assert!(b.memo.len() <= 80);
+    assert!(b.memo.chars().all(|ch| ch == 'é'));
 }
 
 #[test]

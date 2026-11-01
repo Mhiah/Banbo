@@ -25,6 +25,9 @@ const CALLBACK_GAS: Gas = Gas::from_tgas(10);
 const OPERATING_RESERVE: NearToken = NearToken::from_millinear(500);
 const MAX_MEMO_LEN: usize = 256;
 const MAX_REQUEST_ID_LEN: usize = 64;
+/// Blocked attempts kept on-chain for the dashboard (oldest overwritten).
+const BLOCKED_LOG_SIZE: u32 = 50;
+const BLOCKED_MEMO_LEN: usize = 80;
 
 #[derive(BorshStorageKey)]
 #[near]
@@ -33,6 +36,7 @@ enum StorageKey {
     Allowlist,
     Requests,
     RequestOrder,
+    Blocked,
 }
 
 #[near(serializers = [borsh, json])]
@@ -78,9 +82,25 @@ pub struct PaymentRequest {
     pub created_at_ms: u64,
 }
 
+/// A rejected payment attempt, kept in a fixed-size ring buffer so the owner
+/// can see attacks without an indexer. Bounded, so rejection spam can't grow
+/// storage.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BlockedAttempt {
+    pub agent: AccountId,
+    pub request_id: String,
+    pub recipient: AccountId,
+    pub amount: U128,
+    pub reason: String,
+    /// Truncated to 80 bytes.
+    pub memo: String,
+    pub at_ms: u64,
+}
+
 /// What `request_payment` tells the agent. Rejections are returned (and logged
 /// as events) instead of panicking so an agent gets a clear, machine-readable
-/// reason, and nothing is written to storage for them.
+/// reason. Only registered agents' rejections are recorded, in a bounded log.
 #[near(serializers = [json])]
 #[derive(Clone, Debug, PartialEq)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
@@ -132,6 +152,8 @@ pub struct Banbo {
     allowlist: IterableSet<AccountId>,
     requests: LookupMap<String, PaymentRequest>,
     request_order: Vector<String>,
+    blocked: Vector<BlockedAttempt>,
+    blocked_total: u64,
 }
 
 fn event(kind: &str, data: String) {
@@ -140,6 +162,17 @@ fn event(kind: &str, data: String) {
         kind,
         data
     );
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let mut end = max;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s[..end].to_string()
 }
 
 fn esc(s: &str) -> String {
@@ -165,6 +198,8 @@ impl Banbo {
             allowlist: IterableSet::new(StorageKey::Allowlist),
             requests: LookupMap::new(StorageKey::Requests),
             request_order: Vector::new(StorageKey::RequestOrder),
+            blocked: Vector::new(StorageKey::Blocked),
+            blocked_total: 0,
         }
     }
 
@@ -339,6 +374,18 @@ impl Banbo {
                     esc(&memo)
                 ),
             );
+            // Unknown callers are not recorded: anyone could spam them.
+            if self.agents.contains_key(&agent_id) {
+                self.record_blocked(BlockedAttempt {
+                    agent: agent_id.clone(),
+                    request_id: request_id.clone(),
+                    recipient: recipient.clone(),
+                    amount,
+                    reason: reason.clone(),
+                    memo: truncate(&memo, BLOCKED_MEMO_LEN),
+                    at_ms: env::block_timestamp_ms(),
+                });
+            }
             return RequestOutcome::Rejected { reason };
         }
 
@@ -450,6 +497,22 @@ impl Banbo {
             .collect()
     }
 
+    /// Most recent blocked attempts first (up to 50 kept).
+    pub fn list_blocked(&self, limit: Option<u32>) -> Vec<BlockedAttempt> {
+        let len = self.blocked.len();
+        let limit = limit.unwrap_or(BLOCKED_LOG_SIZE).min(BLOCKED_LOG_SIZE) as u64;
+        let total = self.blocked_total;
+        (0..total.min(len as u64).min(limit))
+            .map(|i| ((total - 1 - i) % BLOCKED_LOG_SIZE as u64) as u32)
+            .filter_map(|idx| self.blocked.get(idx).cloned())
+            .collect()
+    }
+
+    /// How many attempts have been blocked since deployment (registered agents only).
+    pub fn blocked_count(&self) -> u64 {
+        self.blocked_total
+    }
+
     pub fn get_balances(&self) -> Balances {
         let (spent, reserved) = self.rolled_shared();
         Balances {
@@ -466,6 +529,16 @@ impl Banbo {
     }
 
     // --------------------------------------------------------------- internal
+
+    fn record_blocked(&mut self, b: BlockedAttempt) {
+        let slot = (self.blocked_total % BLOCKED_LOG_SIZE as u64) as u32;
+        if slot < self.blocked.len() {
+            self.blocked.set(slot, b);
+        } else {
+            self.blocked.push(b);
+        }
+        self.blocked_total += 1;
+    }
 
     fn assert_owner(&self) {
         require!(env::predecessor_account_id() == self.owner, "owner only");

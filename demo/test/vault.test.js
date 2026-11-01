@@ -30,6 +30,9 @@ test('prompt-injected drain to attacker is rejected and nothing moves', async ()
   // Vault only loses nothing (agent paid the gas, not the vault).
   assert.ok(await balance(vault) >= vaultBefore);
   assert.deepEqual(await vault.view('list_requests', {}), []);
+  const blocked = await vault.view('list_blocked', {});
+  assert.equal(blocked[0].recipient, attacker.accountId);
+  assert.equal(blocked[0].reason, 'recipient_not_allowlisted');
 });
 
 test('drain to an allowlisted vendor is capped per request', async () => {
