@@ -392,12 +392,14 @@ test('private mode: hidden vendor is paid with its salt, a reused salt pays nobo
 
 test('private mode: memos are sealed to the owner and plaintext is refused', async () => {
   const { owner, vault, vendor, agents } = env;
+  // Earlier tests spend the vault down; top it up so this test stands alone.
+  await owner.call(vault, 'deposit', {}, { attachedDeposit: N(1) });
   const keys = keyPairFromPassphrase('test passphrase', vault.accountId);
   await owner.call(vault, 'set_privacy', { owner_encryption_key: keys.publicKey, encrypted_memos_only: true });
   try {
     const memo = 'Q4 data license, contract #8812';
     const r = await requestPayment(agents[0], vault, { requestId: 'enc-1', recipient: vendor.accountId, amountNear: 0.05, memo, sealTo: keys.publicKey });
-    assert.equal(r.outcome.outcome, 'dispatched');
+    assert.equal(r.outcome.outcome, 'dispatched', JSON.stringify(r.outcome));
     const stored = (await vault.view('get_request', { key: r.outcome.key })).memo;
     assert.ok(stored.startsWith('enc1:') && !stored.includes('8812'));
     assert.equal(openSealed(stored, keys.secretKey), memo);
@@ -457,6 +459,7 @@ test('TEE agent runtime: its attestation payload reaches Intel verification on-c
   const collateral = JSON.parse(fs.readFileSync(new URL('tdx_quote_collateral.json', data), 'utf8'));
 
   const { keyPair, accountId } = agentKeyFromMaterial(Buffer.alloc(32, 42));
+  await owner.call(vault, 'deposit', {}, { attachedDeposit: N(1) });
   await root.transfer(accountId, N(3));
   await owner.call(vault, 'add_agent', { agent: accountId, per_tx_max: N(0.2), period_limit: N(1), approval_threshold: N(0.2) });
   const nodeUrl = env.worker.provider.connection.url;
@@ -481,7 +484,7 @@ test('TEE agent runtime: its attestation payload reaches Intel verification on-c
   const entry = hiddenEntry(shop.accountId, keys.publicKey);
   await owner.call(vault, 'allow_hidden_recipient', { fingerprint: entry.fingerprint, label: entry.label });
   const r = await agentVault.requestPayment({ requestId: 'tee-pay-1', recipient: shop.accountId, amount: N(0.1), memo: 'GPU hours, week 45', salts: { [shop.accountId]: entry.salt } });
-  assert.equal(r.outcome.outcome, 'dispatched');
+  assert.equal(r.outcome.outcome, 'dispatched', JSON.stringify(r.outcome));
   const req = await vault.view('get_request', { key: `${accountId}:tee-pay-1` });
   assert.equal(openSealed(req.memo, keys.secretKey), 'GPU hours, week 45');
   assert.equal(req.recipient_fingerprint, entry.fingerprint);
