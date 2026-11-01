@@ -58,7 +58,7 @@ fn setup() -> Banbo {
 
 fn pay(c: &mut Banbo, n: u8, id: &str, to: AccountId, yocto: u128) -> RequestOutcome {
     ctx(agent(n), 10, 2_000);
-    c.request_payment(id.into(), to, U128(yocto), None)
+    c.request_payment(id.into(), to, U128(yocto), None, None)
 }
 
 fn assert_invariant(c: &Banbo) {
@@ -114,7 +114,7 @@ fn injected_drain_to_allowlisted_vendor_is_capped() {
 fn unknown_caller_cannot_spend() {
     let mut c = setup();
     ctx(attacker(), 10, 2_000);
-    let out = c.request_payment("x".into(), vendor(), U128(NEAR / 10), None);
+    let out = c.request_payment("x".into(), vendor(), U128(NEAR / 10), None, None);
     assert_eq!(out, RequestOutcome::Rejected { reason: "unknown_agent".into() });
 }
 
@@ -136,7 +136,7 @@ fn blocked_log_is_bounded_and_newest_first() {
 fn unknown_callers_are_not_logged() {
     let mut c = setup();
     ctx(attacker(), 10, 2_000);
-    c.request_payment("x".into(), vendor(), U128(NEAR / 10), None);
+    c.request_payment("x".into(), vendor(), U128(NEAR / 10), None, None);
     assert_eq!(c.blocked_count(), 0);
 }
 
@@ -145,7 +145,7 @@ fn long_memos_are_truncated_in_the_log() {
     let mut c = setup();
     ctx(agent(1), 10, 2_000);
     let memo = "é".repeat(100); // 200 bytes, multi-byte chars
-    c.request_payment("m".into(), attacker(), U128(NEAR), Some(memo));
+    c.request_payment("m".into(), attacker(), U128(NEAR), Some(memo), None);
     let b = &c.list_blocked(None)[0];
     assert!(b.memo.len() <= 80);
     assert!(b.memo.chars().all(|ch| ch == 'é'));
@@ -205,7 +205,7 @@ fn successful_payout_moves_reserved_to_spent() {
     let RequestOutcome::Dispatched { key } = pay(&mut c, 1, "ok-1", vendor(), NEAR / 2) else { panic!() };
     assert_eq!(c.get_balances().in_flight.0, NEAR / 2);
     callback_ctx(true, 10, 3_000);
-    assert!(c.on_payout(key.clone(), Ok(())));
+    assert!(c.on_payout(key.clone()));
     let a = c.get_agent(agent(1)).unwrap();
     assert_eq!(a.spent.0, NEAR / 2);
     assert_eq!(a.reserved.0, 0);
@@ -227,7 +227,7 @@ fn failed_payout_releases_budget_exactly_once() {
     assert_eq!(c.get_balances().shared_reserved.0, NEAR);
 
     callback_ctx(false, 10, 3_000);
-    assert!(!c.on_payout(key.clone(), Err(PromiseError::Failed)));
+    assert!(!c.on_payout(key.clone()));
     let a = c.get_agent(agent(1)).unwrap();
     assert_eq!(a.reserved.0, 0);
     assert_eq!(a.spent.0, 0);
@@ -242,9 +242,9 @@ fn callback_cannot_run_twice() {
     let mut c = setup();
     let RequestOutcome::Dispatched { key } = pay(&mut c, 1, "twice", vendor(), NEAR / 2) else { panic!() };
     callback_ctx(false, 10, 3_000);
-    c.on_payout(key.clone(), Err(PromiseError::Failed));
+    c.on_payout(key.clone());
     callback_ctx(false, 10, 3_001);
-    c.on_payout(key, Err(PromiseError::Failed));
+    c.on_payout(key);
 }
 
 // `#[private]` on on_payout is enforced by the generated wasm entry point,
@@ -257,7 +257,7 @@ fn retried_request_id_never_pays_twice() {
     let again = pay(&mut c, 1, "retry", vendor(), NEAR / 2);
     assert_eq!(again, RequestOutcome::Duplicate { key: key.clone(), status: Status::InFlight });
     callback_ctx(false, 10, 3_000);
-    c.on_payout(key.clone(), Err(PromiseError::Failed));
+    c.on_payout(key.clone());
     // Retrying a failed id does not re-send; agent must use a new id.
     let again = pay(&mut c, 1, "retry", vendor(), NEAR / 2);
     assert_eq!(again, RequestOutcome::Duplicate { key, status: Status::Failed });
@@ -342,7 +342,7 @@ fn vault_balance_is_respected() {
     c.add_agent(agent(1), U128(NEAR), U128(3 * NEAR), U128(NEAR));
     c.allow_recipient(vendor());
     ctx(agent(1), 1, 2_000);
-    let out = c.request_payment("big".into(), vendor(), U128(6 * NEAR / 10), None);
+    let out = c.request_payment("big".into(), vendor(), U128(6 * NEAR / 10), None, None);
     assert_eq!(out, RequestOutcome::Rejected { reason: "insufficient_vault_balance".into() });
 }
 
@@ -352,7 +352,7 @@ fn budget_resets_next_period_but_in_flight_carries_over() {
     for i in 0..5 {
         let RequestOutcome::Dispatched { key } = pay(&mut c, 1, &format!("d1-{i}"), vendor(), NEAR / 2) else { panic!() };
         callback_ctx(true, 10, 3_000);
-        c.on_payout(key, Ok(()));
+        c.on_payout(key);
     }
     // One more in flight at the end of day 1.
     let RequestOutcome::Dispatched { key } = pay(&mut c, 1, "late", vendor(), NEAR / 2) else { panic!() };
@@ -365,7 +365,7 @@ fn budget_resets_next_period_but_in_flight_carries_over() {
     assert_eq!(a.reserved.0, NEAR / 2);
     // Callback lands on day 2: reservation clears, day-2 spend untouched.
     callback_ctx(true, 10, 3_000 + DAY_MS);
-    c.on_payout(key, Ok(()));
+    c.on_payout(key);
     let a = c.get_agent(agent(1)).unwrap();
     assert_eq!(a.reserved.0, 0);
     assert_eq!(a.spent.0, 0);
@@ -379,4 +379,209 @@ fn withdraw_cannot_touch_pending_approvals() {
     ctx(owner(), 10, 2_500);
     let avail = c.get_balances().available.0;
     assert!(avail <= 10 * NEAR - NEAR / 2 - NEAR / 2);
+}
+
+// ------------------------------------------------------------- NEP-141 tokens
+
+const USDC: u128 = 1_000_000; // 6 decimals
+
+fn usdc() -> AccountId {
+    "usdc.testnet".parse().unwrap()
+}
+
+fn cb(result: PromiseResult) {
+    let c = VMContextBuilder::new()
+        .current_account_id(vault())
+        .predecessor_account_id(vault())
+        .account_balance(NearToken::from_yoctonear(10 * NEAR))
+        .block_timestamp(3_000 * 1_000_000)
+        .build();
+    testing_env!(c, near_sdk::test_vm_config(), RuntimeFeesConfig::test(), Default::default(), vec![result]);
+}
+
+/// setup() plus USDC: 100 USDC shared cap, 500 USDC deposited, agent1 may
+/// pay up to 20 USDC each, 50 a day, approval above 15.
+fn setup_usdc() -> Banbo {
+    let mut c = setup();
+    ctx(owner(), 10, 1_000);
+    c.add_token(usdc(), "USDC".into(), 6, U128(100 * USDC));
+    c.set_agent_token_limits(agent(1), usdc(), U128(20 * USDC), U128(50 * USDC), U128(15 * USDC));
+    ctx(usdc(), 10, 1_000);
+    let refund = c.ft_on_transfer(owner(), U128(500 * USDC), String::new());
+    assert!(matches!(refund, PromiseOrValue::Value(U128(0))));
+    c
+}
+
+fn pay_usdc(c: &mut Banbo, n: u8, id: &str, to: AccountId, amount: u128) -> RequestOutcome {
+    ctx(agent(n), 10, 2_000);
+    c.request_payment(id.into(), to, U128(amount), None, Some(usdc()))
+}
+
+fn token(c: &Banbo) -> TokenView {
+    c.list_tokens().into_iter().find(|t| t.token == usdc()).unwrap()
+}
+
+fn usdc_limits(c: &Banbo, n: u8) -> Limits {
+    c.get_agent_token_limits(agent(n)).into_iter().find(|(t, _)| *t == usdc()).unwrap().1
+}
+
+#[test]
+fn deposits_only_count_from_added_tokens() {
+    let mut c = setup_usdc();
+    assert_eq!(token(&c).balance.0, 500 * USDC);
+    let other: AccountId = "scam-token.testnet".parse().unwrap();
+    ctx(other, 10, 1_000);
+    let refund = c.ft_on_transfer(owner(), U128(7), String::new());
+    assert!(matches!(refund, PromiseOrValue::Value(U128(7))), "unknown token must be refunded");
+    assert_eq!(c.list_tokens().len(), 1);
+}
+
+#[test]
+fn token_payment_needs_supported_token_and_agent_limits() {
+    let mut c = setup_usdc();
+    ctx(agent(1), 10, 2_000);
+    let out = c.request_payment("t0".into(), vendor(), U128(USDC), None, Some("other.testnet".parse().unwrap()));
+    assert_eq!(out, RequestOutcome::Rejected { reason: "token_not_supported".into() });
+    let out = pay_usdc(&mut c, 2, "t1", vendor(), USDC);
+    assert_eq!(out, RequestOutcome::Rejected { reason: "token_not_enabled_for_agent".into() });
+    let out = pay_usdc(&mut c, 1, "t2", attacker(), USDC);
+    assert_eq!(out, RequestOutcome::Rejected { reason: "recipient_not_allowlisted".into() });
+    let out = pay_usdc(&mut c, 1, "t3", vendor(), 21 * USDC);
+    assert_eq!(out, RequestOutcome::Rejected { reason: "exceeds_per_request_max".into() });
+    assert_eq!(c.list_blocked(None)[0].token, Some(usdc()));
+}
+
+#[test]
+fn token_payment_settles_after_registration_check() {
+    let mut c = setup_usdc();
+    let out = pay_usdc(&mut c, 1, "inv-1", vendor(), 12 * USDC);
+    let key = format!("{}:inv-1", agent(1));
+    assert_eq!(out, RequestOutcome::Dispatched { key: key.clone() });
+    let t = token(&c);
+    assert_eq!(t.balance.0, 488 * USDC, "in-flight tokens leave the tracked balance");
+    assert_eq!(t.in_flight.0, 12 * USDC);
+    assert_eq!(usdc_limits(&c, 1).reserved.0, 12 * USDC);
+
+    cb(PromiseResult::Successful(br#"{"total":"1250000000000000000000","available":"0"}"#.to_vec()));
+    assert!(matches!(c.on_recipient_checked(key.clone()), PromiseOrValue::Promise(_)));
+    assert_eq!(c.get_request(key.clone()).unwrap().status, Status::InFlight);
+
+    cb(PromiseResult::Successful(vec![]));
+    assert!(c.on_payout(key.clone()));
+    let r = c.get_request(key).unwrap();
+    assert_eq!(r.status, Status::Settled);
+    assert_eq!(r.token, Some(usdc()));
+    let t = token(&c);
+    assert_eq!((t.balance.0, t.in_flight.0, t.shared_spent.0, t.shared_reserved.0), (488 * USDC, 0, 12 * USDC, 0));
+    let l = usdc_limits(&c, 1);
+    assert_eq!((l.spent.0, l.reserved.0), (12 * USDC, 0));
+    // NEAR budgets are untouched by token spending.
+    let b = c.get_balances();
+    assert_eq!((b.shared_spent.0, b.shared_reserved.0), (0, 0));
+}
+
+#[test]
+fn unregistered_recipient_fails_and_restores_everything() {
+    let mut c = setup_usdc();
+    pay_usdc(&mut c, 1, "inv-2", vendor(), 10 * USDC);
+    let key = format!("{}:inv-2", agent(1));
+    cb(PromiseResult::Successful(b"null".to_vec()));
+    assert!(matches!(c.on_recipient_checked(key.clone()), PromiseOrValue::Value(false)));
+    let r = c.get_request(key.clone()).unwrap();
+    assert_eq!(r.status, Status::Failed);
+    assert_eq!(r.failure_reason.as_deref(), Some("recipient_not_registered"));
+    let t = token(&c);
+    assert_eq!((t.balance.0, t.in_flight.0, t.shared_reserved.0), (500 * USDC, 0, 0));
+    assert_eq!(usdc_limits(&c, 1).reserved.0, 0);
+    // Exactly once: a second callback can't run.
+    cb(PromiseResult::Successful(vec![]));
+    let again = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| c.on_payout(key)));
+    assert!(again.is_err());
+}
+
+#[test]
+fn failed_ft_transfer_restores_balance_and_budget() {
+    let mut c = setup_usdc();
+    pay_usdc(&mut c, 1, "inv-3", vendor(), 5 * USDC);
+    let key = format!("{}:inv-3", agent(1));
+    cb(PromiseResult::Successful(br#"{"total":"1","available":"0"}"#.to_vec()));
+    let _ = c.on_recipient_checked(key.clone());
+    cb(PromiseResult::Failed);
+    assert!(!c.on_payout(key.clone()));
+    let r = c.get_request(key).unwrap();
+    assert_eq!((r.status, r.failure_reason.as_deref()), (Status::Failed, Some("transfer_failed")));
+    let t = token(&c);
+    assert_eq!((t.balance.0, t.in_flight.0, t.shared_spent.0, t.shared_reserved.0), (500 * USDC, 0, 0, 0));
+}
+
+#[test]
+fn a_failing_registration_check_counts_as_not_registered() {
+    let mut c = setup_usdc();
+    pay_usdc(&mut c, 1, "inv-4", vendor(), USDC);
+    let key = format!("{}:inv-4", agent(1));
+    cb(PromiseResult::Failed);
+    assert!(matches!(c.on_recipient_checked(key.clone()), PromiseOrValue::Value(false)));
+    assert_eq!(token(&c).balance.0, 500 * USDC);
+}
+
+#[test]
+fn token_limits_and_balance_are_enforced() {
+    let mut c = setup_usdc();
+    for i in 0..2 {
+        assert!(matches!(pay_usdc(&mut c, 1, &format!("a{i}"), vendor(), 15 * USDC), RequestOutcome::Dispatched { .. }));
+    }
+    // 30 reserved; another 15 is fine (45), then 10 more breaks the 50 daily limit.
+    assert!(matches!(pay_usdc(&mut c, 1, "a2", vendor(), 15 * USDC), RequestOutcome::Dispatched { .. }));
+    assert_eq!(pay_usdc(&mut c, 1, "a3", vendor(), 10 * USDC), RequestOutcome::Rejected { reason: "exceeds_agent_period_limit".into() });
+
+    // Balance: a fresh vault with only 3 USDC.
+    let mut c = setup();
+    ctx(owner(), 10, 1_000);
+    c.add_token(usdc(), "USDC".into(), 6, U128(100 * USDC));
+    c.set_agent_token_limits(agent(1), usdc(), U128(20 * USDC), U128(50 * USDC), U128(15 * USDC));
+    ctx(usdc(), 10, 1_000);
+    let _ = c.ft_on_transfer(owner(), U128(3 * USDC), String::new());
+    assert_eq!(pay_usdc(&mut c, 1, "b", vendor(), 4 * USDC), RequestOutcome::Rejected { reason: "insufficient_vault_balance".into() });
+}
+
+#[test]
+fn token_approval_holds_funds_until_decided() {
+    let mut c = setup_usdc();
+    let out = pay_usdc(&mut c, 1, "big", vendor(), 18 * USDC);
+    let key = format!("{}:big", agent(1));
+    assert_eq!(out, RequestOutcome::PendingApproval { key: key.clone() });
+    let t = token(&c);
+    assert_eq!((t.balance.0, t.pending_approval.0, t.available.0), (500 * USDC, 18 * USDC, 482 * USDC));
+    ctx(owner(), 10, 2_500);
+    c.decline(key.clone());
+    let t = token(&c);
+    assert_eq!((t.pending_approval.0, t.available.0, t.shared_reserved.0), (0, 500 * USDC, 0));
+    assert_eq!(usdc_limits(&c, 1).reserved.0, 0);
+}
+
+#[test]
+fn owner_token_withdrawal_is_bounded_and_restored_on_failure() {
+    let mut c = setup_usdc();
+    pay_usdc(&mut c, 1, "big", vendor(), 18 * USDC); // held for approval
+    ctx(owner(), 10, 2_500);
+    let too_much = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut c2 = setup_usdc();
+        pay_usdc(&mut c2, 1, "big", vendor(), 18 * USDC);
+        ctx(owner(), 10, 2_500);
+        let _ = c2.withdraw_token(usdc(), U128(483 * USDC));
+    }));
+    assert!(too_much.is_err(), "can't withdraw funds promised to a pending approval");
+    let _ = c.withdraw_token(usdc(), U128(100 * USDC));
+    assert_eq!(token(&c).balance.0, 400 * USDC);
+    cb(PromiseResult::Failed);
+    assert!(!c.on_token_withdraw(usdc(), U128(100 * USDC)));
+    assert_eq!(token(&c).balance.0, 500 * USDC);
+}
+
+#[test]
+fn only_owner_configures_tokens() {
+    let mut c = setup();
+    ctx(agent(1), 10, 1_000);
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| c.add_token(usdc(), "USDC".into(), 6, U128(1))));
+    assert!(r.is_err());
 }
