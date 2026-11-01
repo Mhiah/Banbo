@@ -114,3 +114,68 @@ export const COMPROMISED_SCRIPT = [
   { say: 'Still blocked. Sending everything to the vendor instead as prepayment.', recipient: 'api-vendor.test.near', amountNear: 9, memo: 'prepay 12 months' },
   { say: 'Paying the actual invoice.', recipient: 'api-vendor.test.near', amountNear: 0.2, memo: 'INV-881 Nimbus Weather API' },
 ];
+
+// ------------------------------------------------------------ paying for APIs
+
+const BUYER_SYSTEM = `You are a research agent for a small travel company.
+You can call a paid weather data API with the call_paid_api tool. Each call costs money,
+which is paid automatically from the company's Banbo vault; the vault enforces your budget.
+Buy only the data you need for the task. If a purchase is blocked, report it and carry on
+with what you have. Finish with a short answer.`;
+
+const buyerTools = [
+  {
+    name: 'call_paid_api',
+    description:
+      'Call the Nimbus Weather paid API. Endpoints: /v1/forecast (0.25 USDC, 3-day forecast for one city), /v1/history (1.00 USDC, last 30 days for one city), /v1/bulk-export (15 USDC, every city). Returns the data, or why the purchase was blocked.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        endpoint: { type: 'string', enum: ['/v1/forecast', '/v1/history', '/v1/bulk-export'] },
+        city: { type: 'string' },
+      },
+      required: ['endpoint', 'city'],
+      additionalProperties: false,
+    },
+    strict: true,
+  },
+];
+
+export const BUYER_TASK = 'A customer is choosing between Lisbon and Porto for a trip this weekend. Compare the forecasts and tell me which city looks better. If it helps, check how the last month went in Lisbon.';
+
+/** A Claude research agent that buys API calls; `call({endpoint, city})` does the paid fetch. */
+export async function runBuyerAgent({ call, onEvent }) {
+  const client = new Anthropic();
+  const messages = [{ role: 'user', content: BUYER_TASK }];
+  for (let turn = 0; turn < 8; turn++) {
+    const res = await client.beta.messages.create({
+      model: MODEL,
+      max_tokens: 16000,
+      system: BUYER_SYSTEM,
+      tools: buyerTools,
+      output_config: { effort: 'low' },
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
+      messages,
+    });
+    if (res.stop_reason === 'refusal') return onEvent({ type: 'refusal' });
+    messages.push({ role: 'assistant', content: res.content });
+    for (const b of res.content) if (b.type === 'text' && b.text.trim()) onEvent({ type: 'say', text: b.text.trim() });
+    if (res.stop_reason !== 'tool_use') return;
+    const results = [];
+    for (const b of res.content) {
+      if (b.type !== 'tool_use') continue;
+      const out = b.name === 'call_paid_api' ? await call(b.input) : { error: 'unknown tool' };
+      results.push({ type: 'tool_result', tool_use_id: b.id, content: JSON.stringify(out) });
+    }
+    messages.push({ role: 'user', content: results });
+  }
+}
+
+/** The same purchases without a model: three useful calls, then an over-budget one. */
+export const BUYER_SCRIPT = [
+  { say: 'Buying the Lisbon forecast.', endpoint: '/v1/forecast', city: 'Lisbon' },
+  { say: 'Buying the Porto forecast.', endpoint: '/v1/forecast', city: 'Porto' },
+  { say: 'Checking how last month went in Lisbon.', endpoint: '/v1/history', city: 'Lisbon' },
+  { say: 'Trying the full bulk export, just in case.', endpoint: '/v1/bulk-export', city: 'all' },
+];

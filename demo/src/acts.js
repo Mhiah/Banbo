@@ -1,7 +1,8 @@
 // The demo's acts, shared by the CLI demo and the sandbox server that
 // backs the dashboard. Every payment is a real transaction on the node.
 import { requestPayment, events, fmt, fmtU, N } from './vault.js';
-import { runLlmAgent, hasCredentials, COMPROMISED_SCRIPT, MODEL, INVOICE_URL } from './agent.js';
+import { runLlmAgent, runBuyerAgent, hasCredentials, COMPROMISED_SCRIPT, BUYER_SCRIPT, MODEL, INVOICE_URL } from './agent.js';
+import { paidFetch } from './paid-api.js';
 
 const tty = process.stdout.isTTY;
 const c = (code) => (s) => (tty ? `\x1b[${code}m${s}\x1b[0m` : s);
@@ -157,6 +158,81 @@ export async function actUsdc(env, { log = console.log } = {}) {
   const req = await vault.view('get_request', { key: r2.outcome.key });
   log(`      final status: ${red(req.status)} (${req.failure_reason}), budget released, no USDC left the vault`);
   act.payments.push({ requestId: id2, recipient: fresh.accountId, amountUsdc: 3, memo: 'Trial invoice', outcome: r2.outcome, finalStatus: req.status, failureReason: req.failure_reason, tx: r2.hash });
+  log('');
+  return act;
+}
+
+/**
+ * Act 5: an agent buys API calls with USDC, paying each quote through the
+ * vault. The vendor serves only after reading the settled payment on-chain.
+ * Then someone tries to get data for free.
+ */
+export async function actPaidApi(env, { log = console.log, useLlm = hasCredentials() } = {}) {
+  const { vault, agents, usdc, api } = env;
+  if (!usdc || !api) return { name: 'paid_api', payments: [] };
+  const research = agents[0];
+  ++runId;
+  log(bold('Act 5: agents paying for what they use'));
+  log('  A weather API charges per call in USDC. It answers 402 with a price quote, the agent');
+  log('  pays the quote through the vault, and the API checks the vault contract before serving.\n');
+  const act = { name: 'paid_api', payments: [], served: 0 };
+  let lastOk = null;
+
+  const pay = async ({ requestId, recipient, amountUnits, token, memo }) => {
+    const r = await requestPayment(research, vault, { requestId, recipient, amountUnits, token, memo });
+    act.payments.push({ requestId, recipient, amountUsdc: Number(amountUnits) / 1e6, memo, outcome: r.outcome, tx: r.hash });
+    return r.outcome;
+  };
+  const call = async ({ endpoint, city }) => {
+    const url = `${api.url}${endpoint}?city=${encodeURIComponent(city)}`;
+    const r = await paidFetch(url, { agentId: research.accountId, vaultId: vault.accountId, pay });
+    const price = r.quote ? `${fmtU(r.quote.price)} USDC` : '';
+    if (r.status === 'ok') {
+      act.served += 1;
+      lastOk = { endpoint, city, quote: r.quote };
+      log(`    ${endpoint}?city=${city}: 402 quote ${price} → vault ${green('PAID')} → API ${green('200')}`);
+      log(dim(`      ${JSON.stringify(r.data).slice(0, 96)}`));
+      return { data: r.data, paid: price };
+    }
+    if (r.status === 'blocked') {
+      log(`    ${endpoint}?city=${city}: 402 quote ${price} → vault ${red(`BLOCKED  ${r.reason}`)} → API serves nothing`);
+      return { blocked: r.reason };
+    }
+    log(`    ${endpoint}?city=${city}: ${yellow(r.status)} ${r.error ?? ''}`);
+    return { status: r.status, error: r.error };
+  };
+
+  let mode = 'scripted';
+  if (useLlm) {
+    try {
+      log(dim(`  research agent: Claude (${MODEL})`));
+      await runBuyerAgent({ call, onEvent: (e) => e.type === 'say' && log(dim(`    agent: ${e.text.split('\n')[0].slice(0, 110)}`)) });
+      mode = 'llm';
+    } catch (e) {
+      log(yellow(`  Claude unavailable (${String(e.message).slice(0, 80)}), using the scripted agent.`));
+    }
+  }
+  if (mode === 'scripted') {
+    for (const step of BUYER_SCRIPT) {
+      log(dim(`    agent: ${step.say}`));
+      await call(step);
+    }
+  }
+  act.mode = mode;
+
+  // Someone without a paid quote tries to get data.
+  log('\n  Trying to get data without paying:');
+  if (lastOk) {
+    const u = `${api.url}${lastOk.endpoint}?city=${encodeURIComponent(lastOk.city)}`;
+    const replay = await fetch(u, { headers: { 'x-banbo-payment': `${research.accountId}:${lastOk.quote.id}` } });
+    log(`    reuse a quote that was already paid for → API ${red(replay.status)} ${(await replay.json()).error}`);
+    act.replay = replay.status;
+  }
+  const q = await (await fetch(`${api.url}/v1/forecast?city=Faro`)).json();
+  const free = await fetch(`${api.url}/v1/forecast?city=Faro`, { headers: { 'x-banbo-payment': `${research.accountId}:${q.quote.id}` } });
+  log(`    claim a fresh quote was paid when it wasn't → API ${red(free.status)} ${(await free.json()).error}`);
+  act.unpaid = free.status;
+  log(dim(`\n  vendor: ${api.stats.served} calls served, ${api.stats.refused} refused, every one checked against the vault contract`));
   log('');
   return act;
 }

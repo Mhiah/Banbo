@@ -103,9 +103,9 @@ async function setupUsdc({ root, owner, vault, vendor, agents }) {
 }
 
 /** Call request_payment and return { outcome, hash, logs }. */
-/** Pass amountNear for NEAR, or token + amountUsdc for the test USDC. */
-export async function requestPayment(agent, vault, { requestId, recipient, amountNear, amountUsdc, token, memo }) {
-  const amount = token ? U(amountUsdc) : N(amountNear);
+/** Pass amountNear for NEAR, token + amountUsdc for the test USDC, or amountUnits (smallest units). */
+export async function requestPayment(agent, vault, { requestId, recipient, amountNear, amountUsdc, amountUnits, token, memo }) {
+  const amount = amountUnits ?? (token ? U(amountUsdc) : N(amountNear));
   const res = await agent.callRaw(vault, 'request_payment', {
     request_id: requestId, recipient, amount, memo, token: token ?? null,
   }, { gas: TGAS(150) });

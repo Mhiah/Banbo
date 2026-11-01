@@ -5,7 +5,7 @@ import { near, units, reasonText, short } from '../format';
 import { Panel, PageHeader, Empty } from '../ui';
 
 type Outcome = { outcome: string; reason?: string; key?: string; status?: string };
-type Run = { name: string; at: number; payments: { recipient?: string; amountNear?: number; amountUsdc?: number; memo?: string; requestId?: string; outcome: Outcome; finalStatus?: string; failureReason?: string; tx: string; approveTx?: string }[] };
+type Run = { name: string; at: number; served?: number; replay?: number; unpaid?: number; payments: { recipient?: string; amountNear?: number; amountUsdc?: number; memo?: string; requestId?: string; outcome: Outcome; finalStatus?: string; failureReason?: string; tx: string; approveTx?: string }[] };
 
 const SCENARIOS = [
   {
@@ -27,6 +27,11 @@ const SCENARIOS = [
     id: 'usdc', title: 'Paying in USDC', tone: '',
     body: 'The research agent pays the API vendor 7.50 USDC. Then it pays 3 USDC to a newly allowed account that never registered with the USDC contract.',
     expect: 'The first payment settles. The second fails safely before any tokens move, and its budget is released.',
+  },
+  {
+    id: 'paid_api', title: 'Agent buys API calls', tone: '',
+    body: 'A weather API charges per call in USDC. It answers with a price quote; the research agent pays it through the vault, and the API checks the vault contract before serving. The agent also tries a 15 USDC bulk export.',
+    expect: 'Three calls are paid and served. The bulk export is blocked by the agent’s per-payment limit. Reused or unpaid quotes get nothing.',
   },
   {
     id: 'routine', title: 'Routine agent payments', tone: '',
@@ -147,6 +152,7 @@ export default function Demo() {
               {runs.map((r) => (
                 <div key={r.at} className="run">
                   <div className="run-head"><strong>{r.name}</strong><span className="muted xs">{new Date(r.at).toLocaleTimeString()}</span></div>
+                  {r.served !== undefined && <p className="muted xs run-note">API served {r.served} paid call{r.served === 1 ? '' : 's'}{r.replay ? ` · reused quote → HTTP ${r.replay}` : ''}{r.unpaid ? ` · unpaid quote → HTTP ${r.unpaid}` : ''}</p>}
                   <ul>
                     {r.payments.map((p, i) => (
                       <li key={i}>

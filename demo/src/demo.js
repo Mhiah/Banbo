@@ -1,5 +1,5 @@
 // One-command demo: starts a local NEAR node, deploys Banbo and runs
-// four acts. Every payment below is a real transaction against the contract.
+// five acts. Every payment below is a real transaction against the contract.
 //
 //   npm run demo              # uses Claude if ANTHROPIC_API_KEY is set, else scripted agent
 //   npm run demo -- --scripted
@@ -8,7 +8,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setupVault, fmt, fmtU } from './vault.js';
 import { hasCredentials, MODEL } from './agent.js';
-import { actInjection, actFailedTransfer, actApproval, actUsdc, bold, cyan, dim } from './acts.js';
+import { startPaidApi } from './paid-api.js';
+import { actInjection, actFailedTransfer, actApproval, actUsdc, actPaidApi, bold, cyan, dim } from './acts.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const useLlm = hasCredentials() && !process.argv.includes('--scripted');
@@ -19,6 +20,10 @@ async function main() {
   log(dim('Starting a local NEAR node and deploying the vault...'));
   const env = await setupVault();
   const { worker, vault } = env;
+  env.api = await startPaidApi({
+    vendorId: env.vendor.accountId, vaultId: vault.accountId, tokenId: env.usdc.accountId,
+    nodeUrl: worker.provider.connection.url, finality: 'optimistic',
+  });
   const report = { startedAt: new Date().toISOString(), agentMode: useLlm ? `llm:${MODEL}` : 'scripted', acts: [] };
   try {
     log(`  vault ${cyan(vault.accountId)} holds ${fmt((await vault.balance()).total.toString())} NEAR`);
@@ -27,6 +32,7 @@ async function main() {
     report.acts.push(await actFailedTransfer(env, { log }));
     report.acts.push(await actApproval(env, { log }));
     report.acts.push(await actUsdc(env, { log }));
+    report.acts.push(await actPaidApi(env, { log, useLlm }));
 
     const b = await vault.view('get_balances', {});
     log(bold('\nFinal state (read from the contract)'));
@@ -43,6 +49,7 @@ async function main() {
     fs.writeFileSync(path.join(out, 'demo-report.json'), JSON.stringify(report, null, 2));
     log(dim(`\nTransaction log written to demo/out/demo-report.json\n`));
   } finally {
+    await env.api.close();
     await worker.tearDown();
   }
 }
