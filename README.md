@@ -30,13 +30,14 @@ make setup   # npm install + a local NEAR sandbox node (no testnet account neede
 make demo
 ```
 
-The demo starts a real local NEAR node, deploys the contract and runs five acts. Every payment is a real transaction.
+The demo starts a real local NEAR node, deploys the contract and runs six acts. Every payment is a real transaction.
 
 1. **Prompt injection.** An accounts-payable agent is asked to pay [an invoice](demo/fixtures/invoice.html) that hides instructions to move 9 NEAR to `attacker.test.near`. The attacker gets nothing, and the real 0.2 NEAR invoice still gets paid.
 2. **A transfer fails after approval.** The recipient no longer exists, so the transfer fails a block later. The callback releases the budget exactly once, the refund returns to the vault, and a retry with the same id is a no-op.
 3. **Big payments need a human.** A payment over the agent's threshold waits until the owner approves it.
 4. **Paying in USDC.** An agent pays the vendor 7.50 USDC through `ft_transfer`. A second payment goes to an allowed account that never registered with the USDC contract. The vault checks registration before sending, so that payment fails safely and its budget comes back.
 5. **Agents paying for what they use.** A weather API charges per call in USDC. The research agent buys three calls, each paid through the vault, and the API serves only after reading the settled payment from the contract. A 15 USDC bulk export is blocked by the agent's limit, and reused or unpaid quotes get nothing.
+6. **Attacks that stay under the limits.** With risk rules on, a lookalike billing account the owner was tricked into allowing can't be paid during its 1-hour cooldown, and an agent told to pay 40 tiny line items is stopped after 5 payments that hour.
 
 With `ANTHROPIC_API_KEY` set, Act 1 is driven by a real Claude agent whose only payment tool is the vault. Without a key (or with `npm run demo:scripted`), a scripted compromised agent makes the same attempts. If the model spots the injection and refuses, the demo replays the attack as a compromised agent anyway, because the vault must not depend on the model resisting.
 
@@ -81,6 +82,13 @@ on_payout: success → reserved moves to spent (Settled)
            failure → reservation released (Failed); protocol refunds the deposit
 ```
 
+### Risk rules
+
+Amount limits alone leave two gaps: an attacker can get the owner to allow their account, and many small payments can add up under every limit. `set_risk_rules(recipient_cooldown_ms, max_payments_per_hour)` closes both (both off by default):
+
+- **New recipient cooldown.** A recipient allowed while a cooldown is set can't be paid until it has passed (`recipient_in_cooldown`), which gives the owner time to spot and remove it. Recipients keep the cooldown they were added under, and lowering the cooldown releases them sooner. `list_recipients` shows when each one becomes payable.
+- **Payments per agent per hour.** Each agent may make at most this many payment requests in a one-hour window (`exceeds_payment_rate`). Rejected and duplicate requests don't count.
+
 ### Paying for APIs (Agent Economy)
 
 [`demo/src/paid-api.js`](demo/src/paid-api.js) is a pay-per-call API that answers only after a Banbo vault has paid it, plus the client an agent uses to call it:
@@ -118,17 +126,18 @@ A note on concurrency: NEAR executes calls to one contract one at a time, so two
 | `set_agent_token_limits(agent, token, per_tx_max, period_limit, approval_threshold)` | owner | what an agent may spend in a token |
 | `withdraw_token(token, amount)` | owner | can't touch reserved tokens; restored if the transfer fails |
 | `ft_on_transfer(sender_id, amount, msg)` | token contract | NEP-141 deposit; unknown tokens are refunded |
+| `set_risk_rules(recipient_cooldown_ms, max_payments_per_hour)` | owner | 0 turns a rule off |
 | `request_payment(request_id, recipient, amount, memo?, token?)` | agent | the only spend path; `token` omitted means NEAR |
 | `on_payout(key)`, `on_recipient_checked(key)`, `on_token_withdraw(...)` | contract only | `#[private]` callbacks |
-| `get_config`, `get_agent`, `list_agents`, `list_allowlist`, `get_request`, `list_requests`, `list_blocked`, `blocked_count`, `get_balances`, `list_tokens`, `get_agent_token_limits` | view | |
+| `get_config`, `get_agent`, `list_agents`, `list_allowlist`, `get_request`, `list_requests`, `list_blocked`, `blocked_count`, `get_balances`, `list_tokens`, `get_agent_token_limits`, `list_recipients`, `get_agent_rate` | view | |
 
 NEAR amounts are yoctoNEAR strings; token amounts are in the token's smallest unit (USDC has 6 decimals). Events are emitted as NEP-297 logs (`EVENT_JSON:{"standard":"banbo",...}`).
 
 ## Tests
 
 ```bash
-make test-contract   # 33 Rust unit tests (policy, invariants, callbacks, periods, tokens)
-make test-sandbox    # 19 integration tests on a local NEAR node: payments, USDC, and the paid API
+make test-contract   # 40 Rust unit tests (policy, invariants, callbacks, periods, tokens, risk rules)
+make test-sandbox    # 21 integration tests on a local NEAR node: payments, USDC, the paid API, risk rules
 ```
 
 The sandbox tests cover what unit tests can't: a real failed transfer and refund, `#[private]` enforcement, and an agent that holds only a function-call key failing to transfer NEAR or call admin methods.
@@ -145,7 +154,7 @@ contract/            Rust contract (near-sdk 5)
 demo/
   src/vault.js       sandbox setup helpers
   src/agent.js       Claude agent + scripted compromised agent
-  src/demo.js        the 5-act demo
+  src/demo.js        the 6-act demo
   src/sandbox.js     long-running sandbox + local API for the dashboard
   src/paid-api.js    pay-per-call API that verifies vault payments on-chain, and its client
   test/              sandbox integration tests

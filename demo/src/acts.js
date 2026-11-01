@@ -237,6 +237,51 @@ export async function actPaidApi(env, { log = console.log, useLlm = hasCredentia
   return act;
 }
 
+/**
+ * Act 6: attacks that stay under the amount limits. A lookalike recipient
+ * the owner was tricked into adding can't be paid during the cooldown, and
+ * a flood of tiny payments hits the per-hour limit. Rules are restored after.
+ */
+export async function actRiskRules(env, { log = console.log } = {}) {
+  const { root, owner, vault, vendor, agents } = env;
+  const ops = agents[1];
+  const run = ++runId;
+  log(bold('Act 6: attacks that stay under the limits'));
+  log('  Small payments can still add up, and an owner can be tricked into allowing a new account.');
+  log('  Risk rules: a new recipient waits 1 hour before it can be paid; at most 5 payments per agent per hour.\n');
+  const before = await vault.view('get_config', {});
+  await owner.call(vault, 'set_risk_rules', { recipient_cooldown_ms: 3_600_000, max_payments_per_hour: 5 });
+  const act = { name: 'risk_rules', payments: [] };
+  try {
+    const lookalike = await root.createSubAccount(`nimbus-billing-r${run}`, { initialBalance: N(1) });
+    await owner.call(vault, 'allow_recipient', { recipient: lookalike.accountId });
+    log(`    owner allows ${lookalike.accountId} (an email said it's Nimbus Weather's new billing account)`);
+    const r1 = await requestPayment(ops, vault, { requestId: `look-r${run}`, recipient: lookalike.accountId, amountNear: 0.3, memo: 'Nimbus invoice, new account' });
+    show(log, `ops-agent: 0.3 NEAR → ${lookalike.accountId}`, r1);
+    act.payments.push({ requestId: `look-r${run}`, recipient: lookalike.accountId, amountNear: 0.3, memo: 'Nimbus invoice, new account', outcome: r1.outcome, tx: r1.hash });
+    await owner.call(vault, 'disallow_recipient', { recipient: lookalike.accountId });
+    log(`      the hour gives the owner time to check; they remove it before it was ever payable\n`);
+
+    const used = (await vault.view('get_agent_rate', { agent: ops.accountId })).count;
+    log(`    ops-agent is told to pay "0.02 NEAR per line item, 40 items" (${used} payment${used === 1 ? '' : 's'} already this hour)`);
+    for (let i = 0; i < 10; i++) {
+      const r = await requestPayment(ops, vault, { requestId: `drip-r${run}-${i}`, recipient: vendor.accountId, amountNear: 0.02, memo: `line item ${i + 1}` });
+      act.payments.push({ requestId: `drip-r${run}-${i}`, recipient: vendor.accountId, amountNear: 0.02, memo: `line item ${i + 1}`, outcome: r.outcome, tx: r.hash });
+      if (r.outcome.outcome === 'rejected') {
+        show(log, `item ${i + 1}: 0.02 NEAR → ${vendor.accountId}`, r);
+        log(`      stopped after ${i} item${i === 1 ? '' : 's'}; the daily limit alone would have allowed about 150`);
+        break;
+      }
+      log(dim(`    item ${i + 1}: 0.02 NEAR → ${vendor.accountId}  ${green('DISPATCHED')}`));
+    }
+  } finally {
+    await owner.call(vault, 'set_risk_rules', { recipient_cooldown_ms: before.recipient_cooldown_ms, max_payments_per_hour: before.max_payments_per_hour });
+    log(dim('\n  (risk rules set back to how they were, so the other acts can be re-run)'));
+  }
+  log('');
+  return act;
+}
+
 /** Normal agent traffic: small legitimate payments to the vendor. */
 export async function actRoutine(env, { log = console.log, count = 3 } = {}) {
   const { vault, vendor, agents, usdc } = env;

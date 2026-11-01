@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { near, toYocto, toUnits, units, pct, ago } from './format';
+import { near, toYocto, toUnits, units, pct, ago, duration, until } from './format';
 
 describe('amounts', () => {
   it('round-trips NEAR and yoctoNEAR exactly', () => {
@@ -33,5 +33,16 @@ describe('token amounts', () => {
     expect(units('1', 6)).toBe('0.00');
     expect(toUnits('12.345678', 6)).toBe('12345678');
     expect(() => toUnits('1.0000001', 6)).toThrow();
+  });
+});
+
+describe('risk rule durations', () => {
+  it('formats cooldowns and time left', () => {
+    expect(duration(0)).toBe('Off');
+    expect(duration(3_600_000)).toBe('1 hour');
+    expect(duration(90 * 60_000)).toBe('1.5 hours');
+    expect(duration(10 * 60_000)).toBe('10 minutes');
+    expect(until(3_600_000, 0)).toBe('in 1h');
+    expect(until(42 * 60_000, 0)).toBe('in 42m');
   });
 });

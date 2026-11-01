@@ -25,6 +25,8 @@ const POLICY: Record<string, string> = {
   zero_amount: 'Amount check',
   token_not_supported: 'Accepted tokens',
   token_not_enabled_for_agent: 'Agent token limits',
+  recipient_in_cooldown: 'New recipient cooldown',
+  exceeds_payment_rate: 'Payments per hour',
 };
 
 const LONG_REASON: Record<string, string> = {
@@ -40,6 +42,8 @@ const LONG_REASON: Record<string, string> = {
   token_not_enabled_for_agent: 'This payment was rejected because this agent has no spending limits for this token.',
   recipient_not_registered: 'This payment didn’t go out because the recipient isn’t registered with the token contract, so it couldn’t receive the tokens. The reservation was released and nothing left the vault.',
   transfer_failed: 'The transfer failed on-chain. The reservation was released exactly once and the funds stayed in the vault.',
+  recipient_in_cooldown: 'This payment was rejected because the recipient was allowed only recently and its cooldown hasn’t passed. The cooldown gives you time to check new recipients before money can reach them.',
+  exceeds_payment_rate: 'This payment was rejected because the agent hit its limit on payments per hour. This stops many small payments from adding up.',
 };
 
 export default function Activity() {

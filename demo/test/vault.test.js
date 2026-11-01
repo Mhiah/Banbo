@@ -322,3 +322,41 @@ test('paid API: the agent refuses a quote that asks it to pay through another va
   assert.equal(r.status, 'refused');
   assert.equal(paid, false);
 });
+
+// ------------------------------------------------------------ risk rules
+
+test('risk rules: a newly allowed recipient waits out the cooldown', async () => {
+  const { root, owner, vault, agents } = env;
+  const fresh = await root.createSubAccount('late-vendor', { initialBalance: N(2) });
+  await owner.call(vault, 'set_risk_rules', { recipient_cooldown_ms: 4000, max_payments_per_hour: 0 });
+  try {
+    // The long-standing vendor is unaffected; the new one is not payable yet.
+    await owner.call(vault, 'allow_recipient', { recipient: fresh.accountId });
+    const r1 = await requestPayment(agents[2], vault, { requestId: 'cool-1', recipient: fresh.accountId, amountNear: 0.01, memo: '' });
+    assert.deepEqual(r1.outcome, { outcome: 'rejected', reason: 'recipient_in_cooldown' });
+    const rec = (await vault.view('list_recipients', {})).find((r) => r.account === fresh.accountId);
+    assert.equal(rec.payable_from_ms - rec.added_at_ms, 4000);
+    await new Promise((ok) => setTimeout(ok, 5000));
+    const r2 = await requestPayment(agents[2], vault, { requestId: 'cool-2', recipient: fresh.accountId, amountNear: 0.01, memo: '' });
+    assert.equal(r2.outcome.outcome, 'dispatched');
+  } finally {
+    await owner.call(vault, 'set_risk_rules', { recipient_cooldown_ms: 0, max_payments_per_hour: 0 });
+  }
+});
+
+test('risk rules: per-hour payment limit stops a slow drip', async () => {
+  const { owner, vault, vendor, agents } = env;
+  const buyer = agents[2];
+  const used = (await vault.view('get_agent_rate', { agent: buyer.accountId })).count;
+  await owner.call(vault, 'set_risk_rules', { recipient_cooldown_ms: 0, max_payments_per_hour: used + 2 });
+  try {
+    for (const id of ['drip-1', 'drip-2']) {
+      const r = await requestPayment(buyer, vault, { requestId: id, recipient: vendor.accountId, amountNear: 0.01, memo: 'tiny' });
+      assert.equal(r.outcome.outcome, 'dispatched');
+    }
+    const r = await requestPayment(buyer, vault, { requestId: 'drip-3', recipient: vendor.accountId, amountNear: 0.01, memo: 'tiny' });
+    assert.deepEqual(r.outcome, { outcome: 'rejected', reason: 'exceeds_payment_rate' });
+  } finally {
+    await owner.call(vault, 'set_risk_rules', { recipient_cooldown_ms: 0, max_payments_per_hour: 0 });
+  }
+});

@@ -369,3 +369,10 @@ main .alert { margin: 0 0 16px; }
 .tl-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
 .token-limits .minibar { margin-left: 0; }
 .run-note { margin: -2px 0 6px; }
+
+/* Risk rules */
+.risk-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.risk-grid .rule-value { margin: 2px 0 6px; font-size: 18px; font-weight: 600; }
+.risk-grid .rule-desc { margin: 0; }
+@media (max-width: 640px) { .risk-grid { grid-template-columns: 1fr; gap: 16px; } }
+.rcpt { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }

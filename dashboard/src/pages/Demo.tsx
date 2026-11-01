@@ -34,6 +34,11 @@ const SCENARIOS = [
     expect: 'Three calls are paid and served. The bulk export is blocked by the agent’s per-payment limit. Reused or unpaid quotes get nothing.',
   },
   {
+    id: 'risk', title: 'Attacks that stay under the limits', tone: '',
+    body: 'Risk rules are turned on: new recipients wait 1 hour, and each agent may make 5 payments an hour. The owner is tricked into allowing a lookalike billing account, and an agent is told to pay 40 tiny line items.',
+    expect: 'The lookalike can’t be paid during its cooldown. The tiny payments stop after 5. The rules are then set back to how they were.',
+  },
+  {
     id: 'routine', title: 'Routine agent payments', tone: '',
     body: 'Two agents pay the allowed API vendor small amounts in NEAR and USDC, as they would day to day.',
     expect: 'Payments settle and count against each agent’s daily limit.',

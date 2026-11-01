@@ -66,7 +66,29 @@ const REASONS: Record<string, string> = {
   token_not_enabled_for_agent: 'Agent has no limits for this token',
   recipient_not_registered: 'Recipient can’t receive this token yet',
   transfer_failed: 'Transfer failed',
+  recipient_in_cooldown: 'Recipient was added too recently',
+  exceeds_payment_rate: 'Too many payments this hour',
 };
+
+/** 3_600_000 → "1 hour", 90_000 → "1.5 minutes", 0 → "Off". */
+export function duration(ms: number): string {
+  if (!ms) return 'Off';
+  const fmt = (v: number, unit: string) => `${Number.isInteger(v) ? v : v.toFixed(1)} ${unit}${v === 1 ? '' : 's'}`;
+  if (ms >= 86_400_000) return fmt(ms / 86_400_000, 'day');
+  if (ms >= 3_600_000) return fmt(ms / 3_600_000, 'hour');
+  if (ms >= 60_000) return fmt(ms / 60_000, 'minute');
+  return fmt(ms / 1000, 'second');
+}
+
+/** Time left until `ms`, e.g. "in 42m". */
+export function until(ms: number, now = Date.now()): string {
+  const s = Math.max(0, Math.round((ms - now) / 1000));
+  if (s < 60) return `in ${s}s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `in ${m}m`;
+  const h = Math.floor(m / 60);
+  return m % 60 ? `in ${h}h ${m % 60}m` : `in ${h}h`;
+}
 export const reasonText = (r: string) => REASONS[r] ?? r.replace(/_/g, ' ');
 
 export const short = (id: string) => (id.length > 28 ? `${id.slice(0, 12)}…${id.slice(-12)}` : id);

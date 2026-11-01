@@ -1,5 +1,5 @@
 // One-command demo: starts a local NEAR node, deploys Banbo and runs
-// five acts. Every payment below is a real transaction against the contract.
+// six acts. Every payment below is a real transaction against the contract.
 //
 //   npm run demo              # uses Claude if ANTHROPIC_API_KEY is set, else scripted agent
 //   npm run demo -- --scripted
@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { setupVault, fmt, fmtU } from './vault.js';
 import { hasCredentials, MODEL } from './agent.js';
 import { startPaidApi } from './paid-api.js';
-import { actInjection, actFailedTransfer, actApproval, actUsdc, actPaidApi, bold, cyan, dim } from './acts.js';
+import { actInjection, actFailedTransfer, actApproval, actUsdc, actPaidApi, actRiskRules, bold, cyan, dim } from './acts.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const useLlm = hasCredentials() && !process.argv.includes('--scripted');
@@ -33,6 +33,7 @@ async function main() {
     report.acts.push(await actApproval(env, { log }));
     report.acts.push(await actUsdc(env, { log }));
     report.acts.push(await actPaidApi(env, { log, useLlm }));
+    report.acts.push(await actRiskRules(env, { log }));
 
     const b = await vault.view('get_balances', {});
     log(bold('\nFinal state (read from the contract)'));

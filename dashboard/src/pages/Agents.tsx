@@ -82,6 +82,7 @@ function AgentDetail({ id, agent }: { id: string; agent: Agent }) {
         <dt>Daily limit</dt><dd><Amount yocto={agent.period_limit} /></dd>
         <dt>Max per payment</dt><dd><Amount yocto={agent.per_tx_max} /></dd>
         <dt>Needs approval above</dt><dd><Amount yocto={agent.approval_threshold} /></dd>
+        <dt>Payments this hour</dt><dd>{s.rates[id]?.count ?? 0}{s.config.max_payments_per_hour ? ` of ${s.config.max_payments_per_hour}` : ''}</dd>
         <dt>Can pay</dt><dd>{s.allowlist.length} allowed recipient{s.allowlist.length === 1 ? '' : 's'} (shared by all agents)</dd>
       </dl>
       <div className="bar-row"><MiniBar value={used} max={agent.period_limit} /><span className="muted small">{near(used)} of {near(agent.period_limit)} NEAR used</span></div>

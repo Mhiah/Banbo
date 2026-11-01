@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useBanbo } from '../state';
 import { NEAR_ASSET, assetOf, type Asset } from '../near';
-import { near, units, toUnits, short } from '../format';
+import { near, units, toUnits, short, duration, until } from '../format';
 import { Panel, PageHeader, Addr, Amount, Dialog, ChangeSummary, Empty } from '../ui';
 
 type Pending = { title: string; rows: [string, ReactNode, ReactNode][]; note?: ReactNode; label: string; method: string; args: object; danger?: boolean };
@@ -12,6 +12,7 @@ export default function Rules() {
   const bal = s.balances;
   const [pending, setPending] = useState<Pending | null>(null);
   const [editCap, setEditCap] = useState<string | null>(null); // 'NEAR' or token id
+  const [editRisk, setEditRisk] = useState(false);
   const [editAgent, setEditAgent] = useState<{ id: string; token: string | null } | null>(null);
   const [newRecipient, setNewRecipient] = useState('');
   const [recErr, setRecErr] = useState('');
@@ -28,7 +29,10 @@ export default function Rules() {
 
   const submit = async () => {
     if (!pending) return;
-    if (await b.act(pending.label, pending.method, pending.args)) setPending(null);
+    if (await b.act(pending.label, pending.method, pending.args)) {
+      if (pending.method === 'allow_recipient') setNewRecipient('');
+      setPending(null);
+    }
   };
 
   return (
@@ -103,16 +107,23 @@ export default function Rules() {
         <p className="muted">Agents can only send funds to these accounts. A payment to anyone else, including one an agent was tricked into, is rejected by the contract.{s.tokens.length > 0 && ' For token payments, the recipient must also be registered with the token contract, or the payment fails safely and the funds stay in the vault.'}</p>
         {s.allowlist.length === 0 ? <p className="muted"><em>No recipients allowed yet. Agents can’t pay anyone.</em></p> : (
           <ul className="list">
-            {s.allowlist.map((r) => (
+            {s.allowlist.map((r) => {
+              const rec = s.recipients.find((x) => x.account === r);
+              const cooling = rec && rec.payable_from_ms > b.now;
+              return (
               <li key={r}>
-                <Addr id={r} explorer={b.explorer} full />
+                <span className="rcpt">
+                  <Addr id={r} explorer={b.explorer} full />
+                  {cooling && <span className="badge amber inline" title={`Payable from ${new Date(rec!.payable_from_ms).toLocaleString()}`}><span className="dot" />Cooldown · payable {until(rec!.payable_from_ms, b.now)}</span>}
+                </span>
                 {owner && <button className="btn sm ghost" onClick={() => setPending({
                   title: 'Remove recipient?', label: `${short(r)} removed`, method: 'disallow_recipient', args: { recipient: r }, danger: true,
                   rows: [['Allowed', 'Yes', 'No']],
                   note: <>Agents will no longer be able to pay <span className="mono">{r}</span>. Payments already waiting for approval to this account can’t be approved.</>,
                 })}>Remove</button>}
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
         {owner && (
@@ -129,6 +140,21 @@ export default function Rules() {
           </form>
         )}
         {recErr && <div className="form-err" role="alert">{recErr}</div>}
+      </Panel>
+
+      <Panel title="Risk rules" action={owner && <button className="btn" onClick={() => setEditRisk(true)}>Change</button>}>
+        <div className="risk-grid">
+          <div>
+            <div className="label">New recipient cooldown</div>
+            <div className="rule-value">{duration(s.config.recipient_cooldown_ms)}</div>
+            <p className="rule-desc">A recipient you allow can’t be paid until this has passed. If someone tricks you into adding their account, you have time to notice and remove it.</p>
+          </div>
+          <div>
+            <div className="label">Payments per agent per hour</div>
+            <div className="rule-value">{s.config.max_payments_per_hour || 'No limit'}</div>
+            <p className="rule-desc">Stops many small payments from adding up, even when each one is within the amount limits.</p>
+          </div>
+        </div>
       </Panel>
 
       <Panel title="Budget period">
@@ -148,6 +174,7 @@ export default function Rules() {
         </div>
       </Panel>
 
+      {editRisk && <RiskDialog onClose={() => setEditRisk(false)} onReview={(p) => { setEditRisk(false); setPending(p); }} />}
       {editCap && <CapDialog which={editCap} onClose={() => setEditCap(null)} onReview={(p) => { setEditCap(null); setPending(p); }} />}
       {editAgent && s.agents.some(([id]) => id === editAgent.id) && (
         <AgentDialog id={editAgent.id} token={editAgent.token} onClose={() => setEditAgent(null)} onReview={(p) => { setEditAgent(null); setPending(p); }} />
@@ -249,6 +276,43 @@ function AgentDialog({ id, token, onClose, onReview }: { id: string; token: stri
           {field('perTx', 'Max per payment')}
           {field('daily', 'Daily limit')}
           {field('threshold', 'Approval above')}
+        </div>
+        {err && <div className="form-err" role="alert">{err}</div>}
+      </form>
+    </Dialog>
+  );
+}
+
+function RiskDialog({ onClose, onReview }: { onClose: () => void; onReview: (p: Pending) => void }) {
+  const b = useBanbo();
+  const c = b.state!.config;
+  const [minutes, setMinutes] = useState(String(c.recipient_cooldown_ms / 60_000));
+  const [rate, setRate] = useState(String(c.max_payments_per_hour));
+  const [err, setErr] = useState('');
+  return (
+    <Dialog open title="Change risk rules" onClose={onClose}
+      footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" form="risk-form">Review</button></>}>
+      <form id="risk-form" className="form" onSubmit={(e) => {
+        e.preventDefault();
+        const m = Number(minutes), r = Number(rate);
+        if (!Number.isFinite(m) || m < 0 || m > 43_200) return setErr('Cooldown must be between 0 and 43,200 minutes (30 days).');
+        if (!Number.isInteger(r) || r < 0 || r > 10_000) return setErr('Payments per hour must be a whole number from 0 to 10,000.');
+        const ms = Math.round(m * 60_000);
+        onReview({
+          title: 'Review change', label: 'Risk rules updated', method: 'set_risk_rules',
+          args: { recipient_cooldown_ms: ms, max_payments_per_hour: r },
+          rows: [
+            ['New recipient cooldown', duration(c.recipient_cooldown_ms), duration(ms)],
+            ['Payments per agent per hour', String(c.max_payments_per_hour || 'No limit'), String(r || 'No limit')],
+          ],
+          note: ms > c.recipient_cooldown_ms
+            ? 'A longer cooldown applies to recipients you allow from now on. Recipients already allowed keep theirs.'
+            : ms < c.recipient_cooldown_ms ? 'A shorter cooldown also shortens it for recipients already waiting.' : undefined,
+        });
+      }}>
+        <div className="form-row">
+          <label className="field"><span>New recipient cooldown (minutes, 0 = off)</span><input value={minutes} onChange={(e) => setMinutes(e.target.value)} inputMode="decimal" autoFocus /></label>
+          <label className="field"><span>Payments per agent per hour (0 = no limit)</span><input value={rate} onChange={(e) => setRate(e.target.value)} inputMode="numeric" /></label>
         </div>
         {err && <div className="form-err" role="alert">{err}</div>}
       </form>
