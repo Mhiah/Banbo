@@ -1,0 +1,6 @@
+node_modules/
+contract/target/
+demo/out/
+.env
+*.log
+.near-credentials/

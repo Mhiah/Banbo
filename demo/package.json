@@ -1,0 +1,22 @@
+{
+  "name": "atomicguard-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "postinstall": "node scripts/fetch-sandbox.mjs",
+    "test": "node --test --test-concurrency=1 test/*.test.js",
+    "demo": "node src/demo.js",
+    "demo:scripted": "node src/demo.js --scripted"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.3.0",
+    "near-workspaces": "^5.0.0"
+  },
+  "devDependencies": {
+    "binaryen": "^132.0.0"
+  }
+}
