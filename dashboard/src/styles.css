@@ -368,3 +368,4 @@ main .alert { margin: 0 0 16px; }
 .token-limits .minibar { width: 100%; }
 .tl-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
 .token-limits .minibar { margin-left: 0; }
+.run-note { margin: -2px 0 6px; }

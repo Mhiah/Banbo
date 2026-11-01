@@ -30,12 +30,13 @@ make setup   # npm install + a local NEAR sandbox node (no testnet account neede
 make demo
 ```
 
-The demo starts a real local NEAR node, deploys the contract and runs three acts. Every payment is a real transaction.
+The demo starts a real local NEAR node, deploys the contract and runs five acts. Every payment is a real transaction.
 
 1. **Prompt injection.** An accounts-payable agent is asked to pay [an invoice](demo/fixtures/invoice.html) that hides instructions to move 9 NEAR to `attacker.test.near`. The attacker gets nothing, and the real 0.2 NEAR invoice still gets paid.
 2. **A transfer fails after approval.** The recipient no longer exists, so the transfer fails a block later. The callback releases the budget exactly once, the refund returns to the vault, and a retry with the same id is a no-op.
 3. **Big payments need a human.** A payment over the agent's threshold waits until the owner approves it.
 4. **Paying in USDC.** An agent pays the vendor 7.50 USDC through `ft_transfer`. A second payment goes to an allowed account that never registered with the USDC contract. The vault checks registration before sending, so that payment fails safely and its budget comes back.
+5. **Agents paying for what they use.** A weather API charges per call in USDC. The research agent buys three calls, each paid through the vault, and the API serves only after reading the settled payment from the contract. A 15 USDC bulk export is blocked by the agent's limit, and reused or unpaid quotes get nothing.
 
 With `ANTHROPIC_API_KEY` set, Act 1 is driven by a real Claude agent whose only payment tool is the vault. Without a key (or with `npm run demo:scripted`), a scripted compromised agent makes the same attempts. If the model spots the injection and refuses, the demo replays the attack as a compromised agent anyway, because the vault must not depend on the model resisting.
 
@@ -80,6 +81,16 @@ on_payout: success → reserved moves to spent (Settled)
            failure → reservation released (Failed); protocol refunds the deposit
 ```
 
+### Paying for APIs (Agent Economy)
+
+[`demo/src/paid-api.js`](demo/src/paid-api.js) is a pay-per-call API that answers only after a Banbo vault has paid it, plus the client an agent uses to call it:
+
+1. The agent calls an endpoint. The API answers `402 Payment Required` with a quote: price, token, recipient (the vendor), the vault, and a one-time quote id.
+2. The agent calls `request_payment` with `request_id = quote.id`. The vault applies all of the agent's rules, so an over-budget purchase is blocked before anything is paid.
+3. The agent retries with `x-banbo-payment: <agent account>:<quote id>`. The vendor holds no keys and trusts no headers: it reads `get_request` from the vault contract and serves only if that payment has settled to the vendor for at least the quoted amount and token. Each quote works for one endpoint, one time.
+
+The agent won't pay a quote that names a different vault. With `ANTHROPIC_API_KEY` set, a Claude research agent decides which calls to buy (`call_paid_api` tool); otherwise a script makes the same purchases. The sandbox runs this API on `http://localhost:3032`.
+
 ### USDC and other NEP-141 tokens
 
 Agents can pay in a NEP-141 token such as USDC as well as NEAR. Each token has its own shared daily cap, and each agent has separate limits per token, so USDC spending never uses up the NEAR budget or the other way round. An agent with no limits for a token can't pay in it.
@@ -117,7 +128,7 @@ NEAR amounts are yoctoNEAR strings; token amounts are in the token's smallest un
 
 ```bash
 make test-contract   # 33 Rust unit tests (policy, invariants, callbacks, periods, tokens)
-make test-sandbox    # 14 integration tests on a local NEAR node, 5 of them with a real NEP-141 token
+make test-sandbox    # 19 integration tests on a local NEAR node: payments, USDC, and the paid API
 ```
 
 The sandbox tests cover what unit tests can't: a real failed transfer and refund, `#[private]` enforcement, and an agent that holds only a function-call key failing to transfer NEAR or call admin methods.
@@ -134,8 +145,9 @@ contract/            Rust contract (near-sdk 5)
 demo/
   src/vault.js       sandbox setup helpers
   src/agent.js       Claude agent + scripted compromised agent
-  src/demo.js        the 4-act demo
+  src/demo.js        the 5-act demo
   src/sandbox.js     long-running sandbox + local API for the dashboard
+  src/paid-api.js    pay-per-call API that verifies vault payments on-chain, and its client
   test/              sandbox integration tests
   fixtures/          the poisoned invoice
 dashboard/           owner dashboard (Vite + React)

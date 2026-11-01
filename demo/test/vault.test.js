@@ -6,12 +6,13 @@ import assert from 'node:assert/strict';
 import pkg from 'near-workspaces';
 import { transactions } from 'near-api-js';
 import { setupVault, requestPayment, events, N, U, fmt } from '../src/vault.js';
+import { startPaidApi, paidFetch } from '../src/paid-api.js';
 
 const { createKeyPair } = pkg;
 let env;
 
 before(async () => { env = await setupVault(); });
-after(async () => { await env?.worker.tearDown(); });
+after(async () => { await env?.api?.close(); await env?.worker.tearDown(); });
 
 const balance = async (acc) => BigInt((await acc.balance()).total.toString());
 
@@ -247,4 +248,77 @@ test('USDC: tokens from a contract the owner never added are refunded', async ()
     { attachedDeposit: '1', gas: (100n * 10n ** 12n).toString() });
   assert.equal(await fake.view('ft_balance_of', { account_id: owner.accountId }), U(10));
   assert.equal((await vault.view('list_tokens', {})).length, 1);
+});
+
+// ------------------------------------------------------------ pay-per-call API
+
+async function api() {
+  if (!env.api) {
+    env.api = await startPaidApi({
+      vendorId: env.vendor.accountId, vaultId: env.vault.accountId, tokenId: env.usdc.accountId,
+      nodeUrl: env.worker.provider.connection.url, finality: 'optimistic',
+    });
+  }
+  return env.api;
+}
+const payAs = (agent) => ({ requestId, recipient, amountUnits, token, memo }) =>
+  requestPayment(agent, env.vault, { requestId, recipient, amountUnits, token, memo }).then((r) => r.outcome);
+
+test('paid API: no payment, no data; the quote names the vault, vendor and price', async () => {
+  const a = await api();
+  const r = await fetch(`${a.url}/v1/forecast?city=Lisbon`);
+  assert.equal(r.status, 402);
+  const { quote } = await r.json();
+  assert.equal(quote.vault, env.vault.accountId);
+  assert.equal(quote.recipient, env.vendor.accountId);
+  assert.equal(quote.token, env.usdc.accountId);
+  assert.equal(quote.price, U(0.25));
+});
+
+test('paid API: agent pays through the vault, vendor verifies on-chain and serves once', async () => {
+  const a = await api();
+  const [research] = env.agents;
+  const before = await ftBalance(env.usdc, env.vendor);
+  const url = `${a.url}/v1/forecast?city=Porto`;
+  const r = await paidFetch(url, { agentId: research.accountId, vaultId: env.vault.accountId, pay: payAs(research) });
+  assert.equal(r.status, 'ok');
+  assert.equal(r.data.city, 'Porto');
+  assert.equal(await ftBalance(env.usdc, env.vendor) - before, BigInt(U(0.25)));
+  // The same proof can't be used twice, or for another endpoint.
+  const proof = { headers: { 'x-banbo-payment': `${research.accountId}:${r.quote.id}` } };
+  assert.equal((await fetch(url, proof)).status, 409);
+  const other = await fetch(`${a.url}/v1/history?city=Porto`, proof);
+  assert.equal((await other.json()).error, 'quote_is_for_another_endpoint');
+});
+
+test('paid API: claiming an unpaid or underpaid quote gets nothing', async () => {
+  const a = await api();
+  const [research] = env.agents;
+  const url = `${a.url}/v1/history?city=Faro`;
+  const { quote } = await (await fetch(url)).json();
+  const proof = { headers: { 'x-banbo-payment': `${research.accountId}:${quote.id}` } };
+  assert.equal((await (await fetch(url, proof)).json()).error, 'payment_not_found');
+  // Pay less than the quote under the quote's id.
+  const o = await payAs(research)({ requestId: quote.id, recipient: quote.recipient, amountUnits: U(0.1), token: quote.token, memo: 'cheap' });
+  assert.equal(o.outcome, 'dispatched');
+  assert.equal((await (await fetch(url, proof)).json()).error, 'payment_does_not_match_quote');
+});
+
+test('paid API: a purchase over the agent limit is blocked and nothing is served', async () => {
+  const a = await api();
+  const [research] = env.agents;
+  const before = await ftBalance(env.usdc, env.vault);
+  const r = await paidFetch(`${a.url}/v1/bulk-export`, { agentId: research.accountId, vaultId: env.vault.accountId, pay: payAs(research) });
+  assert.equal(r.status, 'blocked');
+  assert.equal(r.reason, 'exceeds_per_request_max');
+  assert.equal(await ftBalance(env.usdc, env.vault), before);
+});
+
+test('paid API: the agent refuses a quote that asks it to pay through another vault', async () => {
+  const [research] = env.agents;
+  let paid = false;
+  const fakeFetch = async () => ({ status: 402, json: async () => ({ quote: { id: 'q-x', vault: 'evil-vault.test.near', recipient: env.attacker.accountId, price: U(1) } }) });
+  const r = await paidFetch('http://x/v1/forecast', { agentId: research.accountId, vaultId: env.vault.accountId, pay: async () => { paid = true; }, fetchImpl: fakeFetch });
+  assert.equal(r.status, 'refused');
+  assert.equal(paid, false);
 });

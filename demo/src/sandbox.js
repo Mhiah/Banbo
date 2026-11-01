@@ -5,11 +5,13 @@
 // Serves a small local API on http://localhost:3031 (localhost only):
 //   GET  /config           network + account ids for the dashboard
 //   POST /call             {method, args, gas?, deposit?} signed as the vault owner
-//   POST /scenario/:name   injection | failure | approval | usdc | routine
+//   POST /scenario/:name   injection | failure | approval | usdc | paid_api | routine
+// It also runs the demo vendor's pay-per-call API on http://localhost:3032.
 // Signing keys never leave this process.
 import http from 'node:http';
 import { setupVault } from './vault.js';
-import { actInjection, actFailedTransfer, actApproval, actUsdc, actRoutine, bold, cyan, dim } from './acts.js';
+import { startPaidApi } from './paid-api.js';
+import { actInjection, actFailedTransfer, actApproval, actUsdc, actPaidApi, actRoutine, bold, cyan, dim } from './acts.js';
 import { hasCredentials } from './agent.js';
 
 const PORT = Number(process.env.SANDBOX_API_PORT || 3031);
@@ -20,6 +22,10 @@ log(dim('Starting a local NEAR node and deploying the vault...'));
 const env = await setupVault();
 const { worker, owner, vault, vendor, attacker, agents } = env;
 const rpcUrl = worker.provider.connection.url;
+env.api = await startPaidApi({
+  vendorId: vendor.accountId, vaultId: vault.accountId, tokenId: env.usdc.accountId,
+  nodeUrl: rpcUrl, finality: 'optimistic', port: Number(process.env.PAID_API_PORT || 3032),
+});
 
 // A little history so the dashboard isn't empty on first load.
 await actRoutine(env, { log: () => {} });
@@ -33,6 +39,7 @@ const config = {
   vendor: vendor.accountId,
   attacker: attacker.accountId,
   usdc: env.usdc?.accountId ?? null,
+  paidApi: env.api.url,
   llmAgent: hasCredentials(),
 };
 
@@ -42,6 +49,7 @@ const scenarios = {
   failure: () => actFailedTransfer(env, { log }),
   approval: () => actApproval(env, { log, approve: false }),
   usdc: () => actUsdc(env, { log }),
+  paid_api: () => actPaidApi(env, { log }),
   routine: () => actRoutine(env, { log }),
 };
 
@@ -103,10 +111,11 @@ server.listen(PORT, '127.0.0.1', () => {
   log(`  owner     ${owner.accountId}`);
   log(`  agents    ${agents.map((a) => a.accountId).join(', ')}`);
   log(`  api       ${cyan(`http://localhost:${PORT}`)}`);
+  log(`  paid API  ${cyan(env.api.url)}  (demo vendor, charges USDC per call)`);
   log(dim('\nOpen the dashboard (cd dashboard && npm run dev) and choose "Local sandbox".'));
   log(dim('Press Ctrl+C to stop.\n'));
 });
 
-const stop = async () => { server.close(); await worker.tearDown(); process.exit(0); };
+const stop = async () => { server.close(); await env.api.close(); await worker.tearDown(); process.exit(0); };
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
