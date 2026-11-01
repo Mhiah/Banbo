@@ -91,6 +91,11 @@ fn fingerprint_is_salted_and_bound_to_the_account() {
     // Must match what the dashboard and agents compute (sha256 of this string).
     let expect = hex::encode(Sha256::digest(format!("banbo-recipient-v1:quiet-vendor.testnet:{}", SALT)));
     assert_eq!(a, expect);
+    // Same vector as demo/src/privacy.js and dashboard/src/privacy.test.ts.
+    assert_eq!(
+        fp(&"quiet-vendor.near".parse().unwrap(), SALT),
+        "f9ae7fcae4957690fa095cf6a61488e15fb351d612b6a3e343a8f946fd2af7b8"
+    );
     assert!(recipient_fingerprint(&secret_vendor(), "abc").is_none());
     assert!(recipient_fingerprint(&secret_vendor(), &SALT.to_uppercase()).is_none());
 }

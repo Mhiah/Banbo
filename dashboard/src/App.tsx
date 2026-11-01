@@ -7,6 +7,7 @@ import Overview from './pages/Overview';
 import Agents from './pages/Agents';
 import Rules from './pages/Rules';
 import Activity from './pages/Activity';
+import Privacy from './pages/Privacy';
 import Demo from './pages/Demo';
 import Settings from './pages/Settings';
 
@@ -15,6 +16,7 @@ const ROUTES = [
   { path: 'agents', label: 'Agents', el: Agents },
   { path: 'rules', label: 'Spending Rules', el: Rules },
   { path: 'activity', label: 'Activity', el: Activity },
+  { path: 'privacy', label: 'Privacy', el: Privacy },
   { path: 'settings', label: 'Settings', el: Settings },
 ] as const;
 const DEMO = { path: 'demo', label: 'Demo', el: Demo };

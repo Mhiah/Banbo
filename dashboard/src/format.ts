@@ -68,6 +68,10 @@ const REASONS: Record<string, string> = {
   transfer_failed: 'Transfer failed',
   recipient_in_cooldown: 'Recipient was added too recently',
   exceeds_payment_rate: 'Too many payments this hour',
+  memo_not_encrypted: 'Memo wasn’t encrypted',
+  agent_not_attested: 'Agent isn’t a verified TEE agent',
+  attestation_expired: 'Agent’s TEE attestation expired',
+  agent_measurement_not_approved: 'Agent runs an image you no longer approve',
 };
 
 /** 3_600_000 → "1 hour", 90_000 → "1.5 minutes", 0 → "Off". */
@@ -87,6 +91,7 @@ export function until(ms: number, now = Date.now()): string {
   const m = Math.round(s / 60);
   if (m < 60) return `in ${m}m`;
   const h = Math.floor(m / 60);
+  if (h >= 48) return `in ${Math.round(h / 24)}d`;
   return m % 60 ? `in ${h}h ${m % 60}m` : `in ${h}h`;
 }
 export const reasonText = (r: string) => REASONS[r] ?? r.replace(/_/g, ' ');

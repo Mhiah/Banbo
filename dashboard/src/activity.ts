@@ -17,6 +17,8 @@ export interface ActivityItem {
   key?: string;
   /** Why it was blocked, or why a payment failed. */
   reason?: string;
+  /** Paid to a hidden-allowlist vendor. */
+  hidden?: boolean;
   raw: unknown;
 }
 
@@ -56,6 +58,7 @@ export function activity(state: VaultState): ActivityItem[] {
       requestId: r.request_id,
       key: r.key,
       reason: r.failure_reason ?? undefined,
+      hidden: !!r.recipient_fingerprint,
       raw: r,
     })),
   ];

@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
+import { open as openSealed, isSealed } from '../privacy';
 import { useBanbo } from '../state';
 import { activity, STATUS, type ActivityItem, type Kind } from '../activity';
 import { near, ago, reasonText, short } from '../format';
@@ -27,6 +28,10 @@ const POLICY: Record<string, string> = {
   token_not_enabled_for_agent: 'Agent token limits',
   recipient_in_cooldown: 'New recipient cooldown',
   exceeds_payment_rate: 'Payments per hour',
+  memo_not_encrypted: 'Encrypted memos only',
+  agent_not_attested: 'TEE agents only',
+  attestation_expired: 'TEE attestation lifetime',
+  agent_measurement_not_approved: 'Approved agent images',
 };
 
 const LONG_REASON: Record<string, string> = {
@@ -44,7 +49,22 @@ const LONG_REASON: Record<string, string> = {
   transfer_failed: 'The transfer failed on-chain. The reservation was released exactly once and the funds stayed in the vault.',
   recipient_in_cooldown: 'This payment was rejected because the recipient was allowed only recently and its cooldown hasn’t passed. The cooldown gives you time to check new recipients before money can reach them.',
   exceeds_payment_rate: 'This payment was rejected because the agent hit its limit on payments per hour. This stops many small payments from adding up.',
+  memo_not_encrypted: 'This payment was rejected because its memo wasn’t encrypted to your key. The memo was not stored by the vault.',
+  agent_not_attested: 'This payment was rejected because the vault only pays for agents that proved they run your approved image inside a TEE, and this agent hasn’t.',
+  attestation_expired: 'This payment was rejected because the agent’s TEE attestation has expired. It needs to attest again.',
+  agent_measurement_not_approved: 'This payment was rejected because the agent attested with an image you’ve since removed from the approved list.',
 };
+
+const Lock = () => (
+  <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden><rect x="2" y="5.5" width="8" height="5.5" rx="1" fill="none" stroke="currentColor" strokeWidth="1.3" /><path d="M4 5.5V4a2 2 0 0 1 4 0v1.5" fill="none" stroke="currentColor" strokeWidth="1.3" /></svg>
+);
+
+/** A memo as the owner should see it: opened if sealed and unlocked. */
+function Memo({ memo, text }: { memo: string; text: string | null }): ReactNode {
+  if (!isSealed(memo)) return memo;
+  if (text !== null) return <span className="memo-lock" title="Encrypted on-chain; opened on this device"><Lock />{text}</span>;
+  return <span className="memo-lock muted" title="Unlock private mode on the Privacy page to read it"><Lock />Encrypted memo</span>;
+}
 
 export default function Activity() {
   const b = useBanbo();
@@ -54,12 +74,18 @@ export default function Activity() {
   const [open, setOpen] = useState<ActivityItem | null>(null);
 
   const all = useMemo(() => activity(s), [s]);
+  const opened = useMemo(() => {
+    const m = new Map<string, string | null>();
+    for (const i of all) if (isSealed(i.memo)) m.set(i.memo, b.keys ? openSealed(i.memo, b.keys.secretKey) : null);
+    return m;
+  }, [all, b.keys]);
+  const memoText = (i: ActivityItem) => (isSealed(i.memo) ? opened.get(i.memo) ?? '' : i.memo);
   const shown = all.filter((i) => {
     if (filter === 'open' && !(i.kind === 'InFlight' || i.kind === 'PendingApproval')) return false;
     if (filter !== 'all' && filter !== 'open' && i.kind !== filter) return false;
     if (!q.trim()) return true;
     const t = q.trim().toLowerCase();
-    return [i.agent, i.recipient, i.memo, i.requestId, i.reason ?? '', i.asset.symbol].some((f) => f.toLowerCase().includes(t));
+    return [i.agent, i.recipient, memoText(i), i.requestId, i.reason ?? '', i.asset.symbol].some((f) => f.toLowerCase().includes(t));
   });
   const count = (k: Kind) => all.filter((i) => i.kind === k).length;
 
@@ -90,10 +116,10 @@ export default function Activity() {
                   <tr key={i.id} tabIndex={0} onClick={() => setOpen(i)} onKeyDown={(e) => e.key === 'Enter' && setOpen(i)} className={i.kind === 'blocked' ? 'row-blocked' : ''}>
                     <td className="nowrap muted c-time" title={new Date(i.at).toLocaleString()}>{ago(i.at, b.now)}</td>
                     <td className="c-agent"><span className="mono">{short(i.agent)}</span></td>
-                    <td className="c-rcpt"><span className="mono">{short(i.recipient)}</span></td>
+                    <td className="c-rcpt"><span className="mono">{short(i.recipient)}</span>{i.hidden && <span className="badge gray inline" title="On your hidden vendor list">Hidden</span>}</td>
                     <td className="r num c-amt"><Amount yocto={i.amount} asset={i.asset} /></td>
                     <td className="c-status"><StatusBadge kind={i.kind} /></td>
-                    <td className="details-cell c-details">{i.reason ? <span className="reason">{reasonText(i.reason)}</span> : <span className="muted">{i.memo}</span>}</td>
+                    <td className="details-cell c-details">{i.reason ? <span className="reason">{reasonText(i.reason)}</span> : <span className="muted"><Memo memo={i.memo} text={opened.get(i.memo) ?? null} /></span>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -104,13 +130,13 @@ export default function Activity() {
       <p className="footnote">Blocked attempts: the contract keeps the latest 50 from registered agents ({s.blockedCount} blocked in total). Payment requests are kept in full.</p>
 
       <Drawer open={!!open} title="Payment details" onClose={() => setOpen(null)}>
-        {open && <Detail item={open} />}
+        {open && <Detail item={open} memo={<Memo memo={open.memo} text={opened.get(open.memo) ?? null} />} />}
       </Drawer>
     </>
   );
 }
 
-function Detail({ item }: { item: ActivityItem }) {
+function Detail({ item, memo }: { item: ActivityItem; memo: ReactNode }) {
   const b = useBanbo();
   const st = STATUS[item.kind];
   return (
@@ -122,13 +148,13 @@ function Detail({ item }: { item: ActivityItem }) {
       </p>
       <dl className="kv">
         <dt>Agent</dt><dd><Addr id={item.agent} explorer={b.explorer} full /></dd>
-        <dt>Recipient</dt><dd><Addr id={item.recipient} explorer={b.explorer} full /></dd>
+        <dt>Recipient</dt><dd><Addr id={item.recipient} explorer={b.explorer} full />{item.hidden && <span className="badge gray inline">Hidden vendor</span>}</dd>
         <dt>Requested</dt><dd>{new Date(item.at).toLocaleString()}</dd>
         <dt>Request ID</dt><dd className="mono">{item.requestId}</dd>
         {item.asset.token && <><dt>Token</dt><dd><Addr id={item.asset.token} explorer={b.explorer} full /></dd></>}
         {item.reason && item.kind === 'blocked' && <><dt>Rule applied</dt><dd>{POLICY[item.reason] ?? item.reason}</dd></>}
         {item.reason && item.kind === 'Failed' && <><dt>Why it failed</dt><dd>{reasonText(item.reason)}</dd></>}
-        {item.memo && <><dt>Memo</dt><dd>{item.memo}</dd></>}
+        {item.memo && <><dt>Memo</dt><dd>{memo}</dd></>}
         {item.kind !== 'blocked' && <><dt>Funds</dt><dd>{item.kind === 'Settled' ? 'Left the vault' : item.kind === 'InFlight' ? 'Reserved, transfer pending' : item.kind === 'PendingApproval' ? 'Reserved, waiting for you' : 'Returned to the vault'}</dd></>}
       </dl>
       {b.explorer && (
