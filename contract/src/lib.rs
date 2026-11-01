@@ -13,12 +13,22 @@
 //! first checks that the recipient is registered with the token contract,
 //! then sends `ft_transfer`, and reconciles in the same `on_payout` callback.
 //!
+//! Private mode adds three things: a hidden allowlist (recipients stored only
+//! as salted fingerprints), memos encrypted to the owner's key, and agents
+//! that must prove with an Intel TDX attestation that they run approved code
+//! inside a TEE (see `tee.rs`). Amounts and recipients of payments that are
+//! actually made stay public, as on any public chain.
+//!
 //! Core invariant, per agent and for the shared treasury, per asset, in the
 //! current period:
 //!     spent + reserved <= limit
 //! and every request id settles at most once.
 
+mod tee;
+pub use tee::{TeeAttestation, TeeCollateral, TeeEvent, TeeInfo, TeeMeasurement, TeeTcbInfo};
+
 use near_sdk::json_types::U128;
+use sha2::{Digest, Sha256};
 use near_sdk::store::{IterableMap, IterableSet, LookupMap, Vector};
 use near_sdk::{
     env, ext_contract, log, near, require, AccountId, BorshStorageKey, Gas, NearToken,
@@ -41,6 +51,12 @@ const RATE_WINDOW_MS: u64 = 3_600_000;
 /// Balance always kept back for storage and gas, never spendable by agents.
 const OPERATING_RESERVE: NearToken = NearToken::from_millinear(500);
 const MAX_MEMO_LEN: usize = 256;
+/// Encrypted memos and labels: "enc1:" + base64 of a sealed box.
+const MAX_ENC_LEN: usize = 512;
+const ENC_PREFIX: &str = "enc1:";
+const KEY_PREFIX: &str = "x25519:";
+/// Default lifetime of an agent's TEE attestation.
+const DEFAULT_ATTESTATION_TTL_MS: u64 = 7 * 24 * 3_600_000;
 const MAX_REQUEST_ID_LEN: usize = 64;
 /// Blocked attempts kept on-chain for the dashboard (oldest overwritten).
 const BLOCKED_LOG_SIZE: u32 = 50;
@@ -58,6 +74,44 @@ enum StorageKey {
     TokenLimits,
     RecipientAddedAt,
     Rate,
+    Hidden,
+    TeeMeasurements,
+    TeePpids,
+    Tee,
+}
+
+/// A hidden allowlist entry. Only the fingerprint
+/// sha256("banbo-recipient-v1:" + account + ":" + salt) is stored, where the
+/// salt is 32 random bytes the owner gives the agent. Nobody can tell which
+/// account it stands for until the agent pays it (the payment itself is
+/// public). `label` is an optional note encrypted to the owner's key.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct HiddenRecipient {
+    pub added_at_ms: u64,
+    /// Cooldown in force when it was added.
+    pub cooldown_ms: u64,
+    pub label: Option<String>,
+}
+
+#[near(serializers = [json])]
+pub struct HiddenRecipientView {
+    pub fingerprint: String,
+    pub added_at_ms: u64,
+    pub payable_from_ms: u64,
+    pub label: Option<String>,
+}
+
+#[near(serializers = [json])]
+pub struct TeePolicy {
+    /// When on, only agents with a valid attestation can be paid out for.
+    pub require_tee: bool,
+    pub attestation_ttl_ms: u64,
+    /// Accept a TCB status of SWHardeningNeeded as well as UpToDate.
+    pub allow_sw_hardening_needed: bool,
+    pub measurements: Vec<(String, TeeMeasurement)>,
+    /// Empty = any CPU.
+    pub ppids: Vec<String>,
 }
 
 /// How many payments an agent made in the current one-hour window.
@@ -178,6 +232,8 @@ pub struct PaymentRequest {
     /// NEP-141 token contract, or None for native NEAR.
     pub token: Option<AccountId>,
     pub memo: String,
+    /// Set when the recipient was matched on the hidden allowlist.
+    pub recipient_fingerprint: Option<String>,
     pub status: Status,
     /// Why a Failed payment failed: transfer_failed or recipient_not_registered.
     pub failure_reason: Option<String>,
@@ -197,7 +253,7 @@ pub struct BlockedAttempt {
     pub amount: U128,
     pub token: Option<AccountId>,
     pub reason: String,
-    /// Truncated to 80 bytes.
+    /// Truncated to 80 bytes (encrypted memos are kept whole).
     pub memo: String,
     pub at_ms: u64,
 }
@@ -227,6 +283,11 @@ pub struct Config {
     pub recipient_cooldown_ms: u64,
     /// Most payment requests one agent may make per hour (0 = no limit).
     pub max_payments_per_hour: u32,
+    /// "x25519:<hex>": agents encrypt memos to this key.
+    pub owner_encryption_key: Option<String>,
+    /// Plaintext memos are rejected.
+    pub encrypted_memos_only: bool,
+    pub require_tee: bool,
 }
 
 #[near(serializers = [json])]
@@ -270,6 +331,40 @@ pub struct Banbo {
     /// recipient -> (added at, cooldown in force when it was added)
     recipient_added_at: LookupMap<AccountId, (u64, u64)>,
     rate: LookupMap<AccountId, RateWindow>,
+    /// fingerprint -> entry
+    hidden: IterableMap<String, HiddenRecipient>,
+    owner_encryption_key: Option<String>,
+    encrypted_memos_only: bool,
+    require_tee: bool,
+    attestation_ttl_ms: u64,
+    allow_sw_hardening_needed: bool,
+    tee_measurements: IterableMap<String, TeeMeasurement>,
+    tee_ppids: IterableSet<String>,
+    tee: LookupMap<AccountId, TeeInfo>,
+}
+
+/// sha256("banbo-recipient-v1:" + account + ":" + salt), hex. The salt is
+/// 32 bytes as 64 lowercase hex characters.
+pub fn recipient_fingerprint(recipient: &AccountId, salt: &str) -> Option<String> {
+    if salt.len() != 64 || !salt.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)) {
+        return None;
+    }
+    let pre = format!("banbo-recipient-v1:{}:{}", recipient, salt);
+    Some(hex::encode(Sha256::digest(pre.as_bytes())))
+}
+
+fn is_hex(s: &str, len: usize) -> bool {
+    s.len() == len && s.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+}
+
+/// "enc1:" followed by base64 only.
+fn is_encrypted(s: &str) -> bool {
+    s.len() > ENC_PREFIX.len()
+        && s.len() <= MAX_ENC_LEN
+        && s.starts_with(ENC_PREFIX)
+        && s[ENC_PREFIX.len()..]
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'+' || c == b'/' || c == b'=' || c == b'-' || c == b'_')
 }
 
 fn event(kind: &str, data: String) {
@@ -330,6 +425,15 @@ impl Banbo {
             max_payments_per_hour: 0,
             recipient_added_at: LookupMap::new(StorageKey::RecipientAddedAt),
             rate: LookupMap::new(StorageKey::Rate),
+            hidden: IterableMap::new(StorageKey::Hidden),
+            owner_encryption_key: None,
+            encrypted_memos_only: false,
+            require_tee: false,
+            attestation_ttl_ms: DEFAULT_ATTESTATION_TTL_MS,
+            allow_sw_hardening_needed: false,
+            tee_measurements: IterableMap::new(StorageKey::TeeMeasurements),
+            tee_ppids: IterableSet::new(StorageKey::TeePpids),
+            tee: LookupMap::new(StorageKey::Tee),
         }
     }
 
@@ -505,6 +609,146 @@ impl Banbo {
         );
     }
 
+    // ----------------------------------------------------------- private mode
+
+    /// Add a hidden recipient by fingerprint (see `recipient_fingerprint`).
+    /// `label`, if given, must be encrypted to the owner's key.
+    pub fn allow_hidden_recipient(&mut self, fingerprint: String, label: Option<String>) {
+        self.assert_owner();
+        let fingerprint = fingerprint.to_ascii_lowercase();
+        require!(is_hex(&fingerprint, 64), "fingerprint must be 32 bytes of hex");
+        if let Some(l) = &label {
+            require!(is_encrypted(l), "label must be encrypted (enc1:...)");
+        }
+        let entry = match self.hidden.get(&fingerprint) {
+            // Re-adding keeps the original add time, so it can't reset a cooldown trick.
+            Some(e) => HiddenRecipient { label, ..e.clone() },
+            None => HiddenRecipient {
+                added_at_ms: env::block_timestamp_ms(),
+                cooldown_ms: self.recipient_cooldown_ms,
+                label,
+            },
+        };
+        let payable_from = entry.added_at_ms + entry.cooldown_ms.min(self.recipient_cooldown_ms);
+        self.hidden.insert(fingerprint.clone(), entry);
+        event(
+            "hidden_recipient_allowed",
+            format!("{{\"fingerprint\":{},\"payable_from_ms\":{}}}", esc(&fingerprint), payable_from),
+        );
+    }
+
+    pub fn disallow_hidden_recipient(&mut self, fingerprint: String) {
+        self.assert_owner();
+        let fingerprint = fingerprint.to_ascii_lowercase();
+        self.hidden.remove(&fingerprint);
+        event("hidden_recipient_removed", format!("{{\"fingerprint\":{}}}", esc(&fingerprint)));
+    }
+
+    /// `owner_encryption_key`: "x25519:<64 hex>", the public half of a key
+    /// only the owner's dashboard can derive. `encrypted_memos_only`: reject
+    /// any payment whose memo is plaintext.
+    pub fn set_privacy(&mut self, owner_encryption_key: Option<String>, encrypted_memos_only: bool) {
+        self.assert_owner();
+        if let Some(k) = &owner_encryption_key {
+            require!(
+                k.starts_with(KEY_PREFIX) && is_hex(&k[KEY_PREFIX.len()..], 64),
+                "key must be x25519:<64 lowercase hex>"
+            );
+        }
+        require!(
+            !encrypted_memos_only || owner_encryption_key.is_some(),
+            "set an encryption key before requiring encrypted memos"
+        );
+        self.owner_encryption_key = owner_encryption_key;
+        self.encrypted_memos_only = encrypted_memos_only;
+        event(
+            "privacy_set",
+            format!(
+                "{{\"owner_encryption_key\":{},\"encrypted_memos_only\":{}}}",
+                self.owner_encryption_key.as_deref().map(esc).unwrap_or_else(|| "null".into()),
+                encrypted_memos_only
+            ),
+        );
+    }
+
+    /// Approve the exact VM image + app a TEE agent must run. Returns its id.
+    pub fn approve_tee_measurement(&mut self, measurement: TeeMeasurement) -> String {
+        self.assert_owner();
+        let m = measurement.normalized().unwrap_or_else(|e| env::panic_str(&e));
+        let id = m.id();
+        self.tee_measurements.insert(id.clone(), m.clone());
+        event(
+            "tee_measurement_approved",
+            format!("{{\"id\":{},\"compose_hash\":{}}}", esc(&id), esc(&m.compose_hash)),
+        );
+        id
+    }
+
+    /// Agents attested under a removed measurement stop being able to spend
+    /// at once (used when upgrading the agent image).
+    pub fn remove_tee_measurement(&mut self, id: String) {
+        self.assert_owner();
+        require!(self.tee_measurements.remove(&id).is_some(), "unknown measurement");
+        event("tee_measurement_removed", format!("{{\"id\":{}}}", esc(&id)));
+    }
+
+    /// Replace the list of approved CPUs (PPIDs, 16 bytes hex). Empty = any.
+    pub fn set_tee_ppids(&mut self, ppids: Vec<String>) {
+        self.assert_owner();
+        self.tee_ppids.clear();
+        for p in ppids {
+            let p = p.to_ascii_lowercase();
+            require!(is_hex(&p, 32), "ppid must be 16 bytes of hex");
+            self.tee_ppids.insert(p);
+        }
+    }
+
+    pub fn set_tee_policy(&mut self, require_tee: bool, attestation_ttl_ms: u64, allow_sw_hardening_needed: bool) {
+        self.assert_owner();
+        require!(attestation_ttl_ms >= 60_000, "attestation_ttl_ms too short");
+        self.require_tee = require_tee;
+        self.attestation_ttl_ms = attestation_ttl_ms;
+        self.allow_sw_hardening_needed = allow_sw_hardening_needed;
+        event(
+            "tee_policy_set",
+            format!(
+                "{{\"require_tee\":{},\"attestation_ttl_ms\":{},\"allow_sw_hardening_needed\":{}}}",
+                require_tee, attestation_ttl_ms, allow_sw_hardening_needed
+            ),
+        );
+    }
+
+    /// Owner withdraws an agent's attestation (e.g. its host is suspect).
+    pub fn revoke_attestation(&mut self, agent: AccountId) {
+        self.assert_owner();
+        self.tee.remove(&agent);
+        event("attestation_revoked", format!("{{\"agent\":{}}}", esc(agent.as_str())));
+    }
+
+    /// Called by a TEE agent itself, with a fresh TDX quote whose report_data
+    /// is its own implicit account. The owner must already have added the
+    /// agent with `add_agent`; this only proves where and what it runs.
+    /// Panics with the reason if any check fails. Needs ~300 Tgas.
+    pub fn attest_agent(&mut self, attestation: TeeAttestation) -> TeeInfo {
+        let agent_id = env::predecessor_account_id();
+        require!(self.agents.contains_key(&agent_id), "unknown agent: the owner must add it first");
+        let report_data = tee::expected_report_data(agent_id.as_str()).unwrap_or_else(|e| env::panic_str(&e));
+        let measurements: Vec<(String, TeeMeasurement)> =
+            self.tee_measurements.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        require!(!measurements.is_empty(), "no approved TEE measurements");
+        let ppids: Vec<String> = self.tee_ppids.iter().cloned().collect();
+        let v = tee::verify(
+            &attestation,
+            &report_data,
+            env::block_timestamp_ms() / 1000,
+            self.allow_sw_hardening_needed,
+            &measurements,
+            &ppids,
+        )
+        .unwrap_or_else(|e| env::panic_str(&format!("attestation rejected: {}", e)));
+        self.record_attestation(&agent_id, v)
+    }
+
     pub fn set_shared_cap(&mut self, shared_cap: U128) {
         self.assert_owner();
         self.shared_cap = shared_cap.0;
@@ -604,7 +848,11 @@ impl Banbo {
         let mut req = self.requests.get(&key).cloned().unwrap_or_else(|| env::panic_str("unknown request"));
         require!(req.status == Status::PendingApproval, "request is not pending approval");
         // Allowlist may have changed since the request was made.
-        require!(self.allowlist.contains(&req.recipient), "recipient no longer allowlisted");
+        let still_allowed = match &req.recipient_fingerprint {
+            Some(fp) => self.hidden.contains_key(fp),
+            None => self.allowlist.contains(&req.recipient),
+        };
+        require!(still_allowed, "recipient no longer allowlisted");
         self.adjust_pending(&req.token, req.amount.0, false);
         req.status = Status::InFlight;
         self.requests.insert(key.clone(), req.clone());
@@ -629,6 +877,7 @@ impl Banbo {
     /// The only method an agent can call. Intended to be reachable only
     /// through a function-call access key restricted to this method, so a
     /// compromised agent cannot move funds any other way.
+    /// `recipient_salt` is only for recipients on the hidden allowlist.
     pub fn request_payment(
         &mut self,
         request_id: String,
@@ -636,11 +885,13 @@ impl Banbo {
         amount: U128,
         memo: Option<String>,
         token: Option<AccountId>,
+        recipient_salt: Option<String>,
     ) -> RequestOutcome {
         let agent_id = env::predecessor_account_id();
         let memo = memo.unwrap_or_default();
         require!(!request_id.is_empty() && request_id.len() <= MAX_REQUEST_ID_LEN, "bad request_id");
-        require!(memo.len() <= MAX_MEMO_LEN, "memo too long");
+        let encrypted = is_encrypted(&memo);
+        require!(memo.len() <= if encrypted { MAX_ENC_LEN } else { MAX_MEMO_LEN }, "memo too long");
 
         let key = format!("{}:{}", agent_id, request_id);
         if let Some(existing) = self.requests.get(&key) {
@@ -651,7 +902,11 @@ impl Banbo {
             return RequestOutcome::Duplicate { key, status: existing.status.clone() };
         }
 
-        if let Err(reason) = self.check_policy(&agent_id, &recipient, amount.0, &token) {
+        let checked = self.check_policy(&agent_id, &recipient, amount.0, &token, &recipient_salt, &memo);
+        if let Err(reason) = checked {
+            // Under the encrypted-memo rule a plaintext memo is not copied
+            // into logs or state (the agent's own transaction is still public).
+            let memo = if reason == "memo_not_encrypted" { String::new() } else { memo };
             event(
                 "payment_rejected",
                 format!(
@@ -674,12 +929,13 @@ impl Banbo {
                     amount,
                     token: token.clone(),
                     reason: reason.clone(),
-                    memo: truncate(&memo, BLOCKED_MEMO_LEN),
+                    memo: if encrypted { memo.clone() } else { truncate(&memo, BLOCKED_MEMO_LEN) },
                     at_ms: env::block_timestamp_ms(),
                 });
             }
             return RequestOutcome::Rejected { reason };
         }
+        let recipient_fingerprint = checked.unwrap();
 
         // Reserve against agent + shared budgets before anything leaves.
         let period = self.current_period();
@@ -699,6 +955,7 @@ impl Banbo {
             amount,
             token: token.clone(),
             memo: memo.clone(),
+            recipient_fingerprint,
             status: if needs_approval { Status::PendingApproval } else { Status::InFlight },
             failure_reason: None,
             period_index: period,
@@ -801,7 +1058,45 @@ impl Banbo {
             current_period: self.current_period(),
             recipient_cooldown_ms: self.recipient_cooldown_ms,
             max_payments_per_hour: self.max_payments_per_hour,
+            owner_encryption_key: self.owner_encryption_key.clone(),
+            encrypted_memos_only: self.encrypted_memos_only,
+            require_tee: self.require_tee,
         }
+    }
+
+    /// Hidden allowlist entries: fingerprints only.
+    pub fn list_hidden_recipients(&self) -> Vec<HiddenRecipientView> {
+        self.hidden
+            .iter()
+            .map(|(fp, e)| HiddenRecipientView {
+                fingerprint: fp.clone(),
+                added_at_ms: e.added_at_ms,
+                payable_from_ms: e.added_at_ms + e.cooldown_ms.min(self.recipient_cooldown_ms),
+                label: e.label.clone(),
+            })
+            .collect()
+    }
+
+    pub fn get_tee_policy(&self) -> TeePolicy {
+        TeePolicy {
+            require_tee: self.require_tee,
+            attestation_ttl_ms: self.attestation_ttl_ms,
+            allow_sw_hardening_needed: self.allow_sw_hardening_needed,
+            measurements: self.tee_measurements.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            ppids: self.tee_ppids.iter().cloned().collect(),
+        }
+    }
+
+    pub fn get_agent_tee(&self, agent: AccountId) -> Option<TeeInfo> {
+        self.tee.get(&agent).cloned()
+    }
+
+    /// Attestations of every agent that has one.
+    pub fn list_agent_tee(&self) -> Vec<(AccountId, TeeInfo)> {
+        self.agents
+            .keys()
+            .filter_map(|a| self.tee.get(a).map(|t| (a.clone(), t.clone())))
+            .collect()
     }
 
     /// Allowed recipients with when each can first be paid.
@@ -1103,13 +1398,16 @@ impl Banbo {
         }
     }
 
+    /// Ok(Some(fingerprint)) when the recipient matched the hidden allowlist.
     fn check_policy(
         &mut self,
         agent_id: &AccountId,
         recipient: &AccountId,
         amount: u128,
         token: &Option<AccountId>,
-    ) -> Result<(), String> {
+        salt: &Option<String>,
+        memo: &str,
+    ) -> Result<Option<String>, String> {
         if self.paused {
             return Err("vault_paused".into());
         }
@@ -1118,6 +1416,18 @@ impl Banbo {
         };
         if !agent.active {
             return Err("agent_disabled".into());
+        }
+        if self.require_tee {
+            match self.tee.get(agent_id) {
+                None => return Err("agent_not_attested".into()),
+                Some(t) if env::block_timestamp_ms() >= t.valid_until_ms => {
+                    return Err("attestation_expired".into())
+                }
+                Some(t) if !self.tee_measurements.contains_key(&t.measurement_id) => {
+                    return Err("agent_measurement_not_approved".into())
+                }
+                Some(_) => {}
+            }
         }
         if amount == 0 {
             return Err("zero_amount".into());
@@ -1130,11 +1440,23 @@ impl Banbo {
         if recipient == &env::current_account_id() || recipient == agent_id {
             return Err("recipient_not_allowed".into());
         }
-        if !self.allowlist.contains(recipient) {
-            return Err("recipient_not_allowlisted".into());
-        }
-        if env::block_timestamp_ms() < self.payable_from(recipient) {
+        let (fingerprint, payable_from) = if self.allowlist.contains(recipient) {
+            (None, self.payable_from(recipient))
+        } else {
+            let hit = salt
+                .as_ref()
+                .and_then(|s| recipient_fingerprint(recipient, s))
+                .and_then(|fp| self.hidden.get(&fp).map(|e| (fp, e.added_at_ms + e.cooldown_ms.min(self.recipient_cooldown_ms))));
+            match hit {
+                Some((fp, from)) => (Some(fp), from),
+                None => return Err("recipient_not_allowlisted".into()),
+            }
+        };
+        if env::block_timestamp_ms() < payable_from {
             return Err("recipient_in_cooldown".into());
+        }
+        if self.encrypted_memos_only && !memo.is_empty() && !is_encrypted(memo) {
+            return Err("memo_not_encrypted".into());
         }
         if self.max_payments_per_hour > 0 && self.rolled_rate(agent_id).count >= self.max_payments_per_hour {
             return Err("exceeds_payment_rate".into());
@@ -1157,7 +1479,33 @@ impl Banbo {
         if amount > self.available(token) {
             return Err("insufficient_vault_balance".into());
         }
-        Ok(())
+        Ok(fingerprint)
+    }
+
+    fn record_attestation(&mut self, agent_id: &AccountId, v: tee::Verified) -> TeeInfo {
+        let now = env::block_timestamp_ms();
+        let info = TeeInfo {
+            measurement_id: v.measurement_id,
+            compose_hash: v.compose_hash,
+            ppid: v.ppid,
+            tcb_status: v.tcb_status,
+            attested_at_ms: now,
+            valid_until_ms: now + self.attestation_ttl_ms,
+        };
+        self.tee.insert(agent_id.clone(), info.clone());
+        event(
+            "agent_attested",
+            format!(
+                "{{\"agent\":{},\"measurement_id\":{},\"compose_hash\":{},\"ppid\":{},\"tcb_status\":{},\"valid_until_ms\":{}}}",
+                esc(agent_id.as_str()),
+                esc(&info.measurement_id),
+                esc(&info.compose_hash),
+                esc(&info.ppid),
+                esc(&info.tcb_status),
+                info.valid_until_ms
+            ),
+        );
+        info
     }
 
     fn dispatch(&mut self, req: &PaymentRequest) -> Promise {
@@ -1253,3 +1601,5 @@ impl Banbo {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_private;

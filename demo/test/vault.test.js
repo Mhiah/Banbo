@@ -7,6 +7,7 @@ import pkg from 'near-workspaces';
 import { transactions } from 'near-api-js';
 import { setupVault, requestPayment, events, N, U, fmt } from '../src/vault.js';
 import { startPaidApi, paidFetch } from '../src/paid-api.js';
+import { keyPairFromPassphrase, hiddenEntry, open as openSealed } from '../src/privacy.js';
 
 const { createKeyPair } = pkg;
 let env;
@@ -358,5 +359,90 @@ test('risk rules: per-hour payment limit stops a slow drip', async () => {
     assert.deepEqual(r.outcome, { outcome: 'rejected', reason: 'exceeds_payment_rate' });
   } finally {
     await owner.call(vault, 'set_risk_rules', { recipient_cooldown_ms: 0, max_payments_per_hour: 0 });
+  }
+});
+
+// ------------------------------------------------------------ private mode
+
+test('private mode: hidden vendor is paid with its salt, a reused salt pays nobody else', async () => {
+  const { root, owner, vault, attacker, agents } = env;
+  const keys = keyPairFromPassphrase('test passphrase', vault.accountId);
+  const quiet = await root.createSubAccount('quiet-vendor', { initialBalance: N(1) });
+  const entry = hiddenEntry(quiet.accountId, keys.publicKey, 'test');
+  await owner.call(vault, 'allow_hidden_recipient', { fingerprint: entry.fingerprint, label: entry.label });
+  const listed = await vault.view('list_hidden_recipients', {});
+  assert.ok(listed.some((h) => h.fingerprint === entry.fingerprint));
+  assert.ok(!JSON.stringify(listed).includes('quiet-vendor'), 'account name is not in state');
+  assert.ok(!(await vault.view('list_allowlist', {})).includes(quiet.accountId));
+  // The owner can read their own label back.
+  assert.deepEqual(JSON.parse(openSealed(listed.find((h) => h.fingerprint === entry.fingerprint).label, keys.secretKey)),
+    { account: quiet.accountId, salt: entry.salt, note: 'test' });
+
+  const before = await balance(quiet);
+  const r = await requestPayment(agents[0], vault, { requestId: 'hid-1', recipient: quiet.accountId, amountNear: 0.1, memo: '', recipientSalt: entry.salt });
+  assert.equal(r.outcome.outcome, 'dispatched');
+  assert.equal(await balance(quiet) - before, BigInt(N(0.1)));
+  assert.equal((await vault.view('get_request', { key: r.outcome.key })).recipient_fingerprint, entry.fingerprint);
+
+  const none = await requestPayment(agents[0], vault, { requestId: 'hid-2', recipient: quiet.accountId, amountNear: 0.1, memo: '' });
+  assert.deepEqual(none.outcome, { outcome: 'rejected', reason: 'recipient_not_allowlisted' });
+  const reuse = await requestPayment(agents[0], vault, { requestId: 'hid-3', recipient: attacker.accountId, amountNear: 0.1, memo: '', recipientSalt: entry.salt });
+  assert.deepEqual(reuse.outcome, { outcome: 'rejected', reason: 'recipient_not_allowlisted' });
+});
+
+test('private mode: memos are sealed to the owner and plaintext is refused', async () => {
+  const { owner, vault, vendor, agents } = env;
+  const keys = keyPairFromPassphrase('test passphrase', vault.accountId);
+  await owner.call(vault, 'set_privacy', { owner_encryption_key: keys.publicKey, encrypted_memos_only: true });
+  try {
+    const memo = 'Q4 data license, contract #8812';
+    const r = await requestPayment(agents[0], vault, { requestId: 'enc-1', recipient: vendor.accountId, amountNear: 0.05, memo, sealTo: keys.publicKey });
+    assert.equal(r.outcome.outcome, 'dispatched');
+    const stored = (await vault.view('get_request', { key: r.outcome.key })).memo;
+    assert.ok(stored.startsWith('enc1:') && !stored.includes('8812'));
+    assert.equal(openSealed(stored, keys.secretKey), memo);
+    assert.ok(!r.logs.join('\n').includes('8812'), 'event logs carry ciphertext only');
+    const wrong = keyPairFromPassphrase('someone else', vault.accountId);
+    assert.equal(openSealed(stored, wrong.secretKey), null);
+
+    const p = await requestPayment(agents[0], vault, { requestId: 'enc-2', recipient: vendor.accountId, amountNear: 0.05, memo: 'Invoice 2291 for Acme' });
+    assert.deepEqual(p.outcome, { outcome: 'rejected', reason: 'memo_not_encrypted' });
+    assert.ok(!p.logs.join('\n').includes('Acme'));
+    assert.equal((await vault.view('list_blocked', {}))[0].memo, '');
+  } finally {
+    await owner.call(vault, 'set_privacy', { owner_encryption_key: keys.publicKey, encrypted_memos_only: false });
+  }
+});
+
+test('private mode: with TEE required, an agent without an attestation cannot spend', async () => {
+  const { root, owner, vault, vendor, agents } = env;
+  await owner.call(vault, 'set_tee_policy', { require_tee: true, attestation_ttl_ms: 86_400_000, allow_sw_hardening_needed: false });
+  try {
+    const r = await requestPayment(agents[0], vault, { requestId: 'tee-1', recipient: vendor.accountId, amountNear: 0.05, memo: '' });
+    assert.deepEqual(r.outcome, { outcome: 'rejected', reason: 'agent_not_attested' });
+
+    // A TEE-style agent: an implicit account, added by the owner, submits a
+    // forged quote. The contract runs Intel DCAP verification and refuses it.
+    const kp = createKeyPair('ed25519');
+    const implicit = Buffer.from(kp.getPublicKey().data).toString('hex');
+    await root.transfer(implicit, N(2));
+    const teeAgent = root.getAccount(implicit);
+    await teeAgent.setKey(kp);
+    await owner.call(vault, 'add_agent', { agent: implicit, per_tx_max: N(0.1), period_limit: N(1), approval_threshold: N(0.1) });
+    const m = { mrtd: '11'.repeat(48), rtmr0: '22'.repeat(48), rtmr1: '33'.repeat(48), rtmr2: '44'.repeat(48), compose_hash: '55'.repeat(32), key_provider_digest: null };
+    const id = await owner.call(vault, 'approve_tee_measurement', { measurement: m });
+    assert.equal((await vault.view('get_tee_policy', {})).measurements[0][0], id);
+    const forged = {
+      quote: '04000200'.repeat(160),
+      collateral: { pck_crl_issuer_chain: '', root_ca_crl: '', pck_crl: '', tcb_info_issuer_chain: '', tcb_info: '{}', tcb_info_signature: '', qe_identity_issuer_chain: '', qe_identity: '{}', qe_identity_signature: '' },
+      tcb_info: { compose_hash: '55'.repeat(32), app_compose: '{}', event_log: [] },
+    };
+    const res = await teeAgent.callRaw(vault, 'attest_agent', { attestation: forged }, { gas: '300000000000000' });
+    assert.match(JSON.stringify(res.failures), /attestation rejected: quote rejected/);
+    assert.equal(await vault.view('get_agent_tee', { agent: implicit }), null);
+    const r2 = await requestPayment(teeAgent, vault, { requestId: 'tee-2', recipient: vendor.accountId, amountNear: 0.05, memo: '' });
+    assert.deepEqual(r2.outcome, { outcome: 'rejected', reason: 'agent_not_attested' });
+  } finally {
+    await owner.call(vault, 'set_tee_policy', { require_tee: false, attestation_ttl_ms: 86_400_000, allow_sw_hardening_needed: false });
   }
 });
