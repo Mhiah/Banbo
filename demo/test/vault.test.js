@@ -446,3 +446,44 @@ test('private mode: with TEE required, an agent without an attestation cannot sp
     await owner.call(vault, 'set_tee_policy', { require_tee: false, attestation_ttl_ms: 86_400_000, allow_sw_hardening_needed: false });
   }
 });
+
+test('TEE agent runtime: its attestation payload reaches Intel verification on-chain, and it pays with sealed memos and salts', async () => {
+  const { root, owner, vault, agents } = env;
+  const { agentKeyFromMaterial, buildAttestation } = await import('../../tee-agent/src/tee.js');
+  const { openVault } = await import('../../tee-agent/src/vault.js');
+  const fs = await import('node:fs');
+  const data = new URL('../../contract/test-data/', import.meta.url);
+  const quote = fs.readFileSync(new URL('tdx_quote.bin', data));
+  const collateral = JSON.parse(fs.readFileSync(new URL('tdx_quote_collateral.json', data), 'utf8'));
+
+  const { keyPair, accountId } = agentKeyFromMaterial(Buffer.alloc(32, 42));
+  await root.transfer(accountId, N(3));
+  await owner.call(vault, 'add_agent', { agent: accountId, per_tx_max: N(0.2), period_limit: N(1), approval_threshold: N(0.2) });
+  const nodeUrl = env.worker.provider.connection.url;
+  const agentVault = await openVault({ networkId: 'sandbox', nodeUrl, vaultId: vault.accountId, accountId, keyPair });
+
+  // A fake dstack guest agent serving the genuine sample quote: the contract
+  // parses everything and runs Intel verification, which fails only because
+  // the sample's collateral (CRLs, TCB info) expired in 2025-26.
+  const tcb = { mrtd: '01'.repeat(48), rtmr0: '02'.repeat(48), rtmr1: '03'.repeat(48), rtmr2: '04'.repeat(48), rtmr3: '00'.repeat(48), app_compose: '{}', event_log: [] };
+  const client = { getQuote: async () => ({ quote: quote.toString('hex') }), info: async () => ({ tcb_info: tcb }) };
+  const { attestation } = await buildAttestation(client, accountId, async () => collateral);
+  await owner.call(vault, 'approve_tee_measurement', { measurement: { mrtd: '01'.repeat(48), rtmr0: '02'.repeat(48), rtmr1: '03'.repeat(48), rtmr2: '04'.repeat(48), compose_hash: 'ab'.repeat(32), key_provider_digest: null } });
+  await assert.rejects(agentVault.attest(attestation), /attestation rejected: quote rejected: (TCBInfo|Crl)\w*Expired|attestation rejected: quote rejected: \w*[Ee]xpired/);
+
+  // Paying: the runtime seals the memo to the owner and adds the vendor's salt.
+  const keys = keyPairFromPassphrase('test passphrase', vault.accountId);
+  const cfg = await vault.view('get_config', {});
+  if (cfg.owner_encryption_key !== keys.publicKey) {
+    await owner.call(vault, 'set_privacy', { owner_encryption_key: keys.publicKey, encrypted_memos_only: false });
+  }
+  const shop = await root.createSubAccount('tee-shop', { initialBalance: N(1) });
+  const entry = hiddenEntry(shop.accountId, keys.publicKey);
+  await owner.call(vault, 'allow_hidden_recipient', { fingerprint: entry.fingerprint, label: entry.label });
+  const r = await agentVault.requestPayment({ requestId: 'tee-pay-1', recipient: shop.accountId, amount: N(0.1), memo: 'GPU hours, week 45', salts: { [shop.accountId]: entry.salt } });
+  assert.equal(r.outcome.outcome, 'dispatched');
+  const req = await vault.view('get_request', { key: `${accountId}:tee-pay-1` });
+  assert.equal(openSealed(req.memo, keys.secretKey), 'GPU hours, week 45');
+  assert.equal(req.recipient_fingerprint, entry.fingerprint);
+  void agents;
+});

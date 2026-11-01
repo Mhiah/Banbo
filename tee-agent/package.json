@@ -1,0 +1,23 @@
+{
+  "name": "banbo-tee-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A Banbo agent that runs in an Intel TDX confidential VM (dstack), attests to the vault contract and thinks with NEAR AI Cloud private inference",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@noble/hashes": "1.8.0",
+    "@phala/dcap-qvl": "0.7.0",
+    "@phala/dstack-sdk": "0.5.8",
+    "near-api-js": "5.1.1",
+    "tweetnacl": "1.0.3"
+  }
+}
