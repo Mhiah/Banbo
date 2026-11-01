@@ -1,12 +1,18 @@
-.PHONY: setup build test test-contract test-sandbox test-dashboard test-tee-agent demo sandbox dashboard
+.PHONY: setup build reproducible-build verify-build test test-contract test-sandbox test-dashboard test-tee-agent demo sandbox dashboard
 
 setup:            ## install demo deps + NEAR sandbox node, dashboard and TEE agent deps
 	cd demo && npm install
 	cd dashboard && npm install
 	cd tee-agent && npm ci
 
-build:            ## rebuild contract/res/banbo.wasm (needs Rust)
+build:            ## quick local wasm build with your own Rust toolchain (not byte-identical)
 	./contract/build.sh
+
+reproducible-build: ## rebuild contract/res/banbo.wasm in the pinned Docker image
+	./scripts/reproducible-build.sh
+
+verify-build:     ## check the committed wasm matches the source (needs Docker)
+	./scripts/reproducible-build.sh --check
 
 test-contract:    ## Rust unit tests
 	cd contract && cargo test

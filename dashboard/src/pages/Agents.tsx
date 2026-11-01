@@ -69,6 +69,8 @@ function AgentDetail({ id, agent }: { id: string; agent: Agent }) {
   const used = (BigInt(agent.spent) + BigInt(agent.reserved)).toString();
   const items = activity(s).filter((i) => i.agent === id).slice(0, 12);
   const [confirm, setConfirm] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const busyPayments = BigInt(agent.reserved) > 0n || (s.tokenLimits[id] ?? []).some(([, l]) => BigInt(l.reserved) > 0n);
 
   return (
     <>
@@ -114,8 +116,12 @@ function AgentDetail({ id, agent }: { id: string; agent: Agent }) {
           <button className={`btn ${agent.active ? 'danger' : 'primary'}`} disabled={!!b.busy} onClick={() => setConfirm(true)}>
             {agent.active ? 'Disable agent' : 'Re-enable agent'}
           </button>
+          <button className="btn ghost danger-text" disabled={!!b.busy || busyPayments} title={busyPayments ? 'Decline or wait for its open payments first' : undefined} onClick={() => setRemoving(true)}>
+            Remove agent
+          </button>
         </div>
       )}
+      {b.isOwner && busyPayments && <p className="muted xs">This agent has payments waiting or being sent. It can be removed once they finish.</p>}
 
       <h4>Recent activity</h4>
       {items.length === 0 ? <p className="muted">No payments from this agent yet.</p> : (
@@ -145,6 +151,23 @@ function AgentDetail({ id, agent }: { id: string; agent: Agent }) {
       >
         <ChangeSummary rows={[['Status', agent.active ? 'Active' : 'Disabled', agent.active ? 'Disabled' : 'Active']]} signer={b.writer?.accountId ?? null} network={b.network} />
         {agent.active && <p className="muted small">New payment requests from this agent will be rejected. Payments already being sent still settle normally.</p>}
+      </Dialog>
+
+      <Dialog
+        open={removing}
+        title="Remove this agent?"
+        onClose={() => setRemoving(false)}
+        footer={<>
+          <button className="btn" onClick={() => setRemoving(false)}>Cancel</button>
+          <button className="btn danger" disabled={!!b.busy}
+            onClick={async () => { if (await b.act(`${short(id)} removed`, 'remove_agent', { agent: id })) setRemoving(false); }}>
+            {b.busy ? 'Waiting for confirmation…' : 'Remove'}
+          </button>
+        </>}
+      >
+        <ChangeSummary rows={[['Agent', short(id), 'Removed']]} signer={b.writer?.accountId ?? null} network={b.network} />
+        <p className="muted small">Its limits, token limits and TEE attestation are deleted from the vault, which frees their storage. It can’t request payments any more. Its past payments stay in the activity log. To pause an agent you may want back, disable it instead.</p>
+        <p className="muted small">The function-call key on the agent’s account stays there until you delete it, but it can’t move any funds once the agent is removed.</p>
       </Dialog>
     </>
   );

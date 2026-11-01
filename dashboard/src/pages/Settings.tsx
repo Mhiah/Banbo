@@ -1,6 +1,10 @@
+import { useState } from 'react';
 import { useBanbo } from '../state';
 import { NETWORKS, SANDBOX_API, type NetworkId } from '../near';
-import { Panel, PageHeader, Addr } from '../ui';
+import { Panel, PageHeader, Addr, Dialog, ChangeSummary } from '../ui';
+import { short } from '../format';
+
+const ACCOUNT_RE = /^(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/;
 
 export default function Settings() {
   const b = useBanbo();
@@ -44,6 +48,8 @@ export default function Settings() {
         )}
       </Panel>
 
+      {b.state && <Ownership />}
+
       {b.network !== 'sandbox' && (
         <Panel title="Wallet">
           {b.writer?.accountId ? (
@@ -55,5 +61,58 @@ export default function Settings() {
         </Panel>
       )}
     </>
+  );
+}
+
+/** Two-step ownership transfer: the owner proposes, the new owner accepts. */
+function Ownership() {
+  const b = useBanbo();
+  const c = b.state!.config;
+  const [to, setTo] = useState('');
+  const [err, setErr] = useState('');
+  const [review, setReview] = useState<string | null>(null);
+  const me = b.writer?.accountId ?? null;
+  const iAmProposed = !!me && c.pending_owner === me;
+  return (
+    <Panel title="Ownership">
+      <dl className="kv left">
+        <dt>Owner</dt><dd><Addr id={c.owner} explorer={b.explorer} full /></dd>
+        <dt>Transfer</dt><dd>{c.pending_owner ? <>Offered to <Addr id={c.pending_owner} explorer={b.explorer} full />, waiting for them to accept</> : 'None in progress'}</dd>
+      </dl>
+      {iAmProposed && (
+        <div className="detail-actions">
+          <button className="btn primary" disabled={!!b.busy} onClick={() => b.act('You are now the vault owner', 'accept_ownership', {})}>
+            {b.busy ? 'Waiting for confirmation…' : 'Accept ownership'}
+          </button>
+        </div>
+      )}
+      {b.isOwner && (
+        <>
+          <p className="muted small">Ownership moves in two steps: you offer it, and nothing changes until the new account accepts from its own wallet. A typo can’t hand the vault to an account nobody controls. For mainnet, use an account secured by a hardware wallet or a multisig.</p>
+          <form className="owner-transfer" onSubmit={(e) => {
+            e.preventDefault();
+            const v = to.trim().toLowerCase();
+            if (!ACCOUNT_RE.test(v) || v.length < 2 || v.length > 64) return setErr('Enter a valid NEAR account, like treasury.near.');
+            if (v === c.owner) return setErr('That account is already the owner.');
+            setErr(''); setReview(v);
+          }}>
+            <label className="field"><span>New owner account</span><input value={to} onChange={(e) => setTo(e.target.value)} spellCheck={false} placeholder={b.network === 'mainnet' ? 'treasury.near' : 'treasury.testnet'} /></label>
+            <button className="btn">Offer ownership</button>
+            {c.pending_owner && <button type="button" className="btn ghost" disabled={!!b.busy} onClick={() => b.act('Ownership offer cancelled', 'propose_owner', { new_owner: null })}>Cancel offer</button>}
+          </form>
+          {err && <div className="form-err" role="alert">{err}</div>}
+        </>
+      )}
+      <Dialog open={!!review} title="Offer ownership?" onClose={() => setReview(null)}
+        footer={<>
+          <button className="btn" onClick={() => setReview(null)}>Cancel</button>
+          <button className="btn primary" disabled={!!b.busy} onClick={async () => { if (await b.act(`Ownership offered to ${short(review!)}`, 'propose_owner', { new_owner: review })) { setReview(null); setTo(''); } }}>
+            {b.busy ? 'Waiting for confirmation…' : 'Sign and offer'}
+          </button>
+        </>}>
+        <ChangeSummary rows={[['Proposed owner', c.pending_owner ?? 'None', review ?? '']]} signer={me} network={b.network} />
+        <p className="muted small">You stay the owner until {review} accepts. You can cancel the offer before then.</p>
+      </Dialog>
+    </Panel>
   );
 }

@@ -83,7 +83,8 @@ Banbo contract
    2. reserve amount against agent + shared budget
    3a. ≤ approval threshold → Promise transfer ──then──► on_payout (private)
        (USDC: storage_balance_of ──then──► on_recipient_checked ──► ft_transfer ──then──► on_payout)
-   3b. > threshold → PendingApproval until owner approve()/decline()
+   3b. > threshold → PendingApproval until owner approve()/decline(),
+       or until the approval window passes (Expired, budget released)
    ▼
 on_payout: success → reserved moves to spent (Settled)
            failure → reservation released (Failed); protocol refunds the deposit
@@ -95,6 +96,16 @@ Amount limits alone leave two gaps: an attacker can get the owner to allow their
 
 - **New recipient cooldown.** A recipient allowed while a cooldown is set can't be paid until it has passed (`recipient_in_cooldown`), which gives the owner time to spot and remove it. Recipients keep the cooldown they were added under, and lowering the cooldown releases them sooner. `list_recipients` shows when each one becomes payable.
 - **Payments per agent per hour.** Each agent may make at most this many payment requests in a one-hour window (`exceeds_payment_rate`). Rejected and duplicate requests don't count.
+
+### Hardening
+
+- **Approvals expire.** A payment waiting for the owner expires after `approval_ttl_ms` (3 days by default) and its reserved budget goes back to the agent. The next `request_payment` releases overdue approvals on its own, and anyone can call `expire_pending`.
+- **Stuck payments can be recovered.** If a transfer's result never comes back (a callback out of gas, say), the owner can record the outcome with `reconcile_stuck(key, transferred)` once 30 minutes have passed. A late callback is refused, so the payment still counts exactly once.
+- **Owner controls.** `remove_agent` deletes an agent's limits and attestation once nothing of its is open. Ownership moves in two steps (`propose_owner`, then `accept_ownership` from the new account), so a typo can't lose the vault. Only the vault account can call `new`, so a fresh deploy can't be hijacked.
+- **Bounded storage.** The contract keeps the last `history_limit` payments (1,000 by default) and deletes older finished records, returning their storage deposit. At most 100 payments can be open at once.
+- **Reproducible build.** `make verify-build` rebuilds the wasm in a pinned Docker image and checks it byte for byte against the committed one; `scripts/reproducible-build.sh --account <vault> --network mainnet` checks a deployed vault. CI runs every test suite and the build check on each pull request.
+
+The security review (access control, overflow, callback gas, storage costs, upgrade policy) is in [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md#security-review-phase-4).
 
 ### Paying for APIs (Agent Economy)
 
@@ -131,13 +142,18 @@ A note on concurrency: NEAR executes calls to one contract one at a time, so two
 
 | Method | Who | |
 |---|---|---|
-| `new(owner, period_ms, shared_cap)` | deployer | init |
+| `new(owner, period_ms, shared_cap)` | the vault account | init (`#[private]`; deploy and init in one transaction) |
 | `deposit()` | anyone | payable top-up |
 | `add_agent(agent, per_tx_max, period_limit, approval_threshold)` | owner | register or update |
 | `set_agent_active(agent, active)` | owner | kill switch per agent |
 | `allow_recipient` / `disallow_recipient` | owner | allowlist |
 | `pause` / `unpause`, `set_shared_cap`, `withdraw(amount)` | owner | withdraw can't touch reserved funds |
-| `approve(key)` / `decline(key)` | owner | pending payments |
+| `approve(key)` / `decline(key)` | owner | pending payments; an expired one can't be approved |
+| `expire_pending(limit?)` | anyone | release overdue approvals |
+| `reconcile_stuck(key, transferred)` | owner | settle or release a payment whose result never came back (after 30 min) |
+| `remove_agent(agent)` | owner | once it has nothing pending or in flight |
+| `propose_owner(new_owner?)` / `accept_ownership()` | owner / proposed owner | two-step ownership transfer; `null` cancels |
+| `set_approval_ttl(ms)`, `set_history_limit(n)` | owner | 1 min to 30 days; 100 to 10,000 records |
 | `add_token(token, symbol, decimals, shared_cap)` | owner | accept a NEP-141 token, or update its cap |
 | `set_agent_token_limits(agent, token, per_tx_max, period_limit, approval_threshold)` | owner | what an agent may spend in a token |
 | `withdraw_token(token, amount)` | owner | can't touch reserved tokens; restored if the transfer fails |
@@ -150,17 +166,18 @@ A note on concurrency: NEAR executes calls to one contract one at a time, so two
 | `attest_agent(attestation)` | agent | TDX quote verified on-chain; needs ~300 Tgas attached |
 | `request_payment(request_id, recipient, amount, memo?, token?, recipient_salt?)` | agent | the only spend path; `token` omitted means NEAR; `recipient_salt` for hidden vendors |
 | `on_payout(key)`, `on_recipient_checked(key)`, `on_token_withdraw(...)` | contract only | `#[private]` callbacks |
-| `get_config`, `get_agent`, `list_agents`, `list_allowlist`, `get_request`, `list_requests`, `list_blocked`, `blocked_count`, `get_balances`, `list_tokens`, `get_agent_token_limits`, `list_recipients`, `get_agent_rate`, `list_hidden_recipients`, `get_tee_policy`, `get_agent_tee`, `list_agent_tee` | view | |
+| `get_config`, `get_agent`, `list_agents`, `list_allowlist`, `get_request`, `list_requests`, `list_open`, `list_blocked`, `blocked_count`, `get_balances`, `list_tokens`, `get_agent_token_limits`, `list_recipients`, `get_agent_rate`, `list_hidden_recipients`, `get_tee_policy`, `get_agent_tee`, `list_agent_tee` | view | |
 
 NEAR amounts are yoctoNEAR strings; token amounts are in the token's smallest unit (USDC has 6 decimals). Events are emitted as NEP-297 logs (`EVENT_JSON:{"standard":"banbo",...}`).
 
 ## Tests
 
 ```bash
-make test-contract   # 80 Rust unit tests (policy, invariants, callbacks, tokens, risk rules, private mode,
-                     #   TEE checks incl. a genuine Intel TDX quote)
-make test-sandbox    # 25 integration tests on a local NEAR node: payments, USDC, the paid API, risk rules,
-                     #   private mode, the TEE agent runtime against the contract
+make test-contract   # 102 Rust unit tests (policy, invariants, callbacks, tokens, risk rules, private mode,
+                     #   TEE checks incl. a genuine Intel TDX quote, expiry, recovery, owner controls, history)
+make test-sandbox    # 28 integration tests on a local NEAR node: payments, USDC, the paid API, risk rules,
+                     #   private mode, the TEE agent runtime against the contract, hardening
+make verify-build    # rebuild the wasm in Docker and check it matches the committed one
 make test-dashboard  # dashboard unit tests (formatting, private-mode crypto)
 make test-tee-agent  # TEE agent unit tests
 ```
@@ -175,7 +192,8 @@ contract/            Rust contract (near-sdk 5)
   src/tee.rs         on-chain Intel TDX attestation checks
   src/tests*.rs      unit tests
   test-data/         genuine Intel TDX sample quote + collateral for tests
-  build.sh           wasm build without cargo-near
+  build.sh           quick local wasm build without cargo-near
+  docker/            pinned image for the reproducible build
   mock-ft/           test-only NEP-141 token used as USDC on the sandbox
   res/               prebuilt banbo.wasm and mock_ft.wasm (so the demo runs without Rust)
 demo/
@@ -187,11 +205,13 @@ demo/
   src/paid-api.js    pay-per-call API that verifies vault payments on-chain, and its client
   test/              sandbox integration tests
   scripts/tee-gas.mjs  measures the gas of on-chain quote verification
+  scripts/measure.mjs  gas and storage figures for the security review
   fixtures/          the poisoned invoice
 dashboard/           owner dashboard (Vite + React)
 tee-agent/           agent for an Intel TDX VM (dstack): attests to the vault, NEAR AI private inference
 scripts/
   deploy-testnet.sh  deploy + give an agent a restricted key on testnet
+  reproducible-build.sh  pinned Docker build; checks the committed wasm or a deployed vault
   confidential-intents-check.mjs  dry confidential quote from NEAR Intents' 1Click API
 docs/THREAT_MODEL.md
 docs/PRIVACY.md      private mode: what's hidden, what stays public, trust assumptions
@@ -199,11 +219,14 @@ docs/PRIVACY.md      private mode: what's hidden, what stays public, trust assum
 
 ## Building the contract
 
-`contract/res/banbo.wasm` is committed. To rebuild (Rust stable with the `wasm32-unknown-unknown` target, and `make setup` first for `wasm-opt`):
+`contract/res/banbo.wasm` is committed, and it's the output of the reproducible build. To rebuild it the same way (needs Docker):
 
 ```bash
-make build
+make reproducible-build   # writes contract/res/banbo.wasm and its sha256
+make verify-build         # fails if the committed wasm doesn't match the source
 ```
+
+The image (NEAR's `sourcescan/cargo-near` build image, Rust 1.97.1, clang 19) and wasm-opt are pinned by digest and checksum, so anyone gets the same bytes; NEAR's code hash is base58 of the sha256 in `contract/res/banbo.wasm.sha256`. `make build` is a quicker local build with your own toolchain; its output works but won't be byte-identical.
 
 ## Deploying to testnet
 
@@ -224,7 +247,7 @@ OWNER=you.testnet VAULT=vault.you.testnet AGENT=agent.you.testnet VENDOR=vendor.
 - Private mode hides the vendor list and memos, not payments: amounts and recipients of payments that are made are public. See [docs/PRIVACY.md](docs/PRIVACY.md).
 - TEE agents trust Intel TDX and dstack's key service for privacy (never for the spending limits). The full attestation flow has been tested on-chain with a genuine Intel quote, but not yet with an agent deployed in a live TDX VM.
 - The allowlist is the main defense against new recipients. It doesn't judge whether a payment to an allowlisted vendor is sensible beyond the limits.
-- If the callback itself ran out of gas, a request would stay `InFlight`. The callback has a fixed 10 Tgas budget and does very little, but there is no manual recovery method yet.
+- Recovering a stuck payment relies on the owner reading the explorer correctly (`reconcile_stuck`).
 - Testnet only, unaudited. Don't put real funds in it.
 
 See [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).

@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    name: Contract unit tests
+    runs-on: ubuntu-24.04
+    defaults: { run: { working-directory: contract } }
+    steps:
+      - uses: actions/checkout@v4
+      # rustup reads contract/rust-toolchain.toml and installs that exact toolchain.
+      - run: rustup toolchain install
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contract/target
+          key: contract-${{ hashFiles('contract/Cargo.lock', 'contract/rust-toolchain.toml') }}
+      - run: cargo test --locked
+
+  reproducible-build:
+    name: Committed wasm matches the source
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: scripts/reproducible-build.sh --check
+
+  sandbox:
+    name: Integration tests on a local NEAR node
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            demo/package-lock.json
+            tee-agent/package-lock.json
+      # The sandbox tests also run the TEE agent's runtime code.
+      - run: npm ci
+        working-directory: tee-agent
+      - run: npm ci
+        working-directory: demo
+      - run: npm test
+        working-directory: demo
+      - name: Scripted 7-act demo
+        run: npm run demo
+        working-directory: demo
+
+  dashboard:
+    name: Dashboard
+    runs-on: ubuntu-24.04
+    defaults: { run: { working-directory: dashboard } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm test
+      - run: npm run build
+
+  tee-agent:
+    name: TEE agent
+    runs-on: ubuntu-24.04
+    defaults: { run: { working-directory: tee-agent } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tee-agent/package-lock.json
+      - run: npm ci
+      - run: npm test

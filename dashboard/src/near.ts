@@ -25,7 +25,7 @@ export interface Agent {
   spent: string;
   reserved: string;
 }
-export type Status = 'PendingApproval' | 'InFlight' | 'Settled' | 'Failed' | 'Declined';
+export type Status = 'PendingApproval' | 'InFlight' | 'Settled' | 'Failed' | 'Declined' | 'Expired';
 export interface PaymentRequest {
   key: string;
   agent: string;
@@ -41,6 +41,10 @@ export interface PaymentRequest {
   failure_reason: string | null;
   period_index: number;
   created_at_ms: number;
+  dispatched_at_ms: number | null;
+  /** Pending approvals: the owner must decide before this time. */
+  expires_at_ms: number | null;
+  seq: number;
 }
 export interface BlockedAttempt {
   agent: string;
@@ -101,6 +105,11 @@ export interface Config {
   owner_encryption_key: string | null;
   encrypted_memos_only: boolean;
   require_tee: boolean;
+  pending_owner: string | null;
+  approval_ttl_ms: number;
+  history_limit: number;
+  in_flight_recovery_ms: number;
+  open_payments: number;
 }
 export interface HiddenRecipient {
   fingerprint: string;
@@ -196,12 +205,14 @@ export async function view<T>(nodeUrl: string, contractId: string, method: strin
 
 export async function loadVault(nodeUrl: string, contractId: string): Promise<VaultState> {
   const v = <T,>(m: string, a: object = {}) => view<T>(nodeUrl, contractId, m, a);
-  const [config, balances, agents, allowlist, requests, blocked, blockedCount, tokens, recipients, hidden, tee, teeList] = await Promise.all([
+  const [config, balances, agents, allowlist, recent, open, blocked, blockedCount, tokens, recipients, hidden, tee, teeList] = await Promise.all([
     v<Config>('get_config'),
     v<Balances>('get_balances'),
     v<[string, Agent][]>('list_agents'),
     v<string[]>('list_allowlist'),
     v<PaymentRequest[]>('list_requests', { limit: 100 }),
+    // Open payments are always shown, even once they're older than the last 100.
+    v<PaymentRequest[]>('list_open'),
     v<BlockedAttempt[]>('list_blocked'),
     v<number>('blocked_count'),
     v<TokenView[]>('list_tokens'),
@@ -211,6 +222,8 @@ export async function loadVault(nodeUrl: string, contractId: string): Promise<Va
     v<[string, TeeInfo][]>('list_agent_tee'),
   ]);
   const agentTee: Record<string, TeeInfo> = Object.fromEntries(teeList);
+  const seen = new Set(recent.map((r) => r.key));
+  const requests = [...recent, ...open.filter((r) => !seen.has(r.key))];
   const rateList = await Promise.all(agents.map(([id]) => v<RateWindow>('get_agent_rate', { agent: id })));
   const rates: Record<string, RateWindow> = {};
   agents.forEach(([id], i) => (rates[id] = rateList[i]));

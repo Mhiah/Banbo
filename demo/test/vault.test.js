@@ -12,7 +12,9 @@ import { keyPairFromPassphrase, hiddenEntry, open as openSealed } from '../src/p
 const { createKeyPair } = pkg;
 let env;
 
-before(async () => { env = await setupVault(); });
+// The contract's code alone locks about 7 NEAR of storage; fund the vault
+// well above that so the later tests aren't starved by the earlier ones.
+before(async () => { env = await setupVault({ vaultNear: 20 }); });
 after(async () => { await env?.api?.close(); await env?.worker.tearDown(); });
 
 const balance = async (acc) => BigInt((await acc.balance()).total.toString());
@@ -141,7 +143,7 @@ test('over-threshold payment waits for the owner, then pays', async () => {
 });
 
 test('shared cap holds across all agents', async () => {
-  const { vault, vendor, agents } = env;
+  const { owner, vault, vendor, agents } = env;
   let accepted = 0;
   for (let i = 0; i < 12; i++) {
     const r = await requestPayment(agents[i % 2], vault, {
@@ -152,6 +154,8 @@ test('shared cap holds across all agents', async () => {
   const b = await vault.view('get_balances', {});
   assert.ok(BigInt(b.shared_spent) + BigInt(b.shared_reserved) <= BigInt(b.shared_cap));
   assert.ok(accepted < 12);
+  // This test uses up today's shared budget; give the later tests room.
+  await owner.call(vault, 'set_shared_cap', { shared_cap: N(50) });
 });
 
 test('pause stops everything', async () => {
@@ -339,7 +343,7 @@ test('risk rules: a newly allowed recipient waits out the cooldown', async () =>
     assert.equal(rec.payable_from_ms - rec.added_at_ms, 4000);
     await new Promise((ok) => setTimeout(ok, 5000));
     const r2 = await requestPayment(agents[2], vault, { requestId: 'cool-2', recipient: fresh.accountId, amountNear: 0.01, memo: '' });
-    assert.equal(r2.outcome.outcome, 'dispatched');
+    assert.equal(r2.outcome.outcome, 'dispatched', JSON.stringify(r2.outcome));
   } finally {
     await owner.call(vault, 'set_risk_rules', { recipient_cooldown_ms: 0, max_payments_per_hour: 0 });
   }
@@ -353,7 +357,7 @@ test('risk rules: per-hour payment limit stops a slow drip', async () => {
   try {
     for (const id of ['drip-1', 'drip-2']) {
       const r = await requestPayment(buyer, vault, { requestId: id, recipient: vendor.accountId, amountNear: 0.01, memo: 'tiny' });
-      assert.equal(r.outcome.outcome, 'dispatched');
+      assert.equal(r.outcome.outcome, 'dispatched', JSON.stringify(r.outcome));
     }
     const r = await requestPayment(buyer, vault, { requestId: 'drip-3', recipient: vendor.accountId, amountNear: 0.01, memo: 'tiny' });
     assert.deepEqual(r.outcome, { outcome: 'rejected', reason: 'exceeds_payment_rate' });
@@ -489,4 +493,59 @@ test('TEE agent runtime: its attestation payload reaches Intel verification on-c
   assert.equal(openSealed(req.memo, keys.secretKey), 'GPU hours, week 45');
   assert.equal(req.recipient_fingerprint, entry.fingerprint);
   void agents;
+});
+
+test('hardening: an approval nobody decides on expires and its budget comes back', async () => {
+  const { owner, vault, vendor, agents } = env;
+  const buyer = agents[2];
+  await owner.call(vault, 'deposit', {}, { attachedDeposit: N(1) });
+  await owner.call(vault, 'set_approval_ttl', { approval_ttl_ms: 60_000 });
+  try {
+    const before = (await vault.view('get_agent', { agent: buyer.accountId })).reserved;
+    const r = await requestPayment(buyer, vault, { requestId: 'exp-1', recipient: vendor.accountId, amountNear: 0.45, memo: 'needs approval' });
+    assert.equal(r.outcome.outcome, 'pending_approval', JSON.stringify(r.outcome));
+    const req = await vault.view('get_request', { key: r.outcome.key });
+    assert.ok(req.expires_at_ms > req.created_at_ms);
+    // Let the sandbox clock pass the deadline, then anyone can release it.
+    while ((await env.worker.provider.block({ finality: 'final' })).header.timestamp / 1e6 < req.expires_at_ms) {
+      await env.worker.provider.fastForward(60);
+    }
+    await assert.rejects(owner.call(vault, 'approve', { key: r.outcome.key }), /approval window has passed/);
+    const n = await vendor.call(vault, 'expire_pending', {});
+    assert.equal(n, 1);
+    assert.equal((await vault.view('get_request', { key: r.outcome.key })).status, 'Expired');
+    assert.equal((await vault.view('get_agent', { agent: buyer.accountId })).reserved, before);
+  } finally {
+    await owner.call(vault, 'set_approval_ttl', { approval_ttl_ms: 3 * 86_400_000 });
+  }
+});
+
+test('hardening: a stuck payment can only be reconciled by the owner, and not too early', async () => {
+  const { owner, vault, vendor, agents } = env;
+  const r = await requestPayment(agents[0], vault, { requestId: 'stuck-1', recipient: vendor.accountId, amountNear: 0.01, memo: '' });
+  // On a healthy chain the callback settles it at once; recovery is refused.
+  assert.equal((await vault.view('get_request', { key: r.outcome.key })).status, 'Settled');
+  await assert.rejects(owner.call(vault, 'reconcile_stuck', { key: r.outcome.key, transferred: false }), /not in flight/);
+  await assert.rejects(agents[0].call(vault, 'reconcile_stuck', { key: r.outcome.key, transferred: false }), /owner only/);
+});
+
+test('hardening: ownership changes hands in two steps, and a removed agent cannot spend', async () => {
+  const { root, owner, vault, vendor } = env;
+  const next = await root.createSubAccount('next-owner', { initialBalance: N(5) });
+  await owner.call(vault, 'propose_owner', { new_owner: next.accountId });
+  assert.equal((await vault.view('get_config', {})).owner, owner.accountId);
+  await assert.rejects(vendor.call(vault, 'accept_ownership', {}), /not the proposed owner/);
+  await next.call(vault, 'accept_ownership', {});
+  assert.equal((await vault.view('get_config', {})).owner, next.accountId);
+  await assert.rejects(owner.call(vault, 'pause', {}), /owner only/);
+  // Hand it back so the rest of the suite keeps working.
+  await next.call(vault, 'propose_owner', { new_owner: owner.accountId });
+  await owner.call(vault, 'accept_ownership', {});
+
+  const temp = await root.createSubAccount('temp-agent', { initialBalance: N(5) });
+  await owner.call(vault, 'add_agent', { agent: temp.accountId, per_tx_max: N(0.1), period_limit: N(1), approval_threshold: N(1) });
+  await owner.call(vault, 'remove_agent', { agent: temp.accountId });
+  assert.equal(await vault.view('get_agent', { agent: temp.accountId }), null);
+  const r = await requestPayment(temp, vault, { requestId: 'gone-1', recipient: vendor.accountId, amountNear: 0.05, memo: '' });
+  assert.deepEqual(r.outcome, { outcome: 'rejected', reason: 'unknown_agent' });
 });

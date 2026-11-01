@@ -2,8 +2,9 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { open as openSealed, isSealed } from '../privacy';
 import { useBanbo } from '../state';
 import { activity, STATUS, type ActivityItem, type Kind } from '../activity';
-import { near, ago, reasonText, short } from '../format';
-import { Panel, PageHeader, StatusBadge, Addr, Amount, Empty, Drawer } from '../ui';
+import { near, ago, until, duration, reasonText, short } from '../format';
+import { Panel, PageHeader, StatusBadge, Addr, Amount, Empty, Drawer, Dialog } from '../ui';
+import type { PaymentRequest } from '../near';
 
 const FILTERS: { key: 'all' | 'open' | Kind; label: string }[] = [
   { key: 'all', label: 'All' },
@@ -12,6 +13,7 @@ const FILTERS: { key: 'all' | 'open' | Kind; label: string }[] = [
   { key: 'open', label: 'Open' },
   { key: 'Failed', label: 'Failed' },
   { key: 'Declined', label: 'Declined' },
+  { key: 'Expired', label: 'Expired' },
 ];
 
 const POLICY: Record<string, string> = {
@@ -32,6 +34,7 @@ const POLICY: Record<string, string> = {
   agent_not_attested: 'TEE agents only',
   attestation_expired: 'TEE attestation lifetime',
   agent_measurement_not_approved: 'Approved agent images',
+  too_many_open_payments: 'Open payments limit',
 };
 
 const LONG_REASON: Record<string, string> = {
@@ -53,6 +56,8 @@ const LONG_REASON: Record<string, string> = {
   agent_not_attested: 'This payment was rejected because the vault only pays for agents that proved they run your approved image inside a TEE, and this agent hasn’t.',
   attestation_expired: 'This payment was rejected because the agent’s TEE attestation has expired. It needs to attest again.',
   agent_measurement_not_approved: 'This payment was rejected because the agent attested with an image you’ve since removed from the approved list.',
+  too_many_open_payments: 'This payment was rejected because too many payments were already waiting for approval or for their transfer result (the vault allows 100 at once).',
+  reconciled_by_owner: 'The transfer’s result never came back, so you marked it as not sent. The reservation was released and, for a token, the amount was put back in the vault’s balance.',
 };
 
 const Lock = () => (
@@ -127,7 +132,7 @@ export default function Activity() {
           </div>
         )}
       </Panel>
-      <p className="footnote">Blocked attempts: the contract keeps the latest 50 from registered agents ({s.blockedCount} blocked in total). Payment requests are kept in full.</p>
+      <p className="footnote">Blocked attempts: the contract keeps the latest 50 from registered agents ({s.blockedCount} blocked in total). It keeps the latest {s.config.history_limit.toLocaleString()} payment requests, plus any that are still open.</p>
 
       <Drawer open={!!open} title="Payment details" onClose={() => setOpen(null)}>
         {open && <Detail item={open} memo={<Memo memo={open.memo} text={opened.get(open.memo) ?? null} />} />}
@@ -139,6 +144,7 @@ export default function Activity() {
 function Detail({ item, memo }: { item: ActivityItem; memo: ReactNode }) {
   const b = useBanbo();
   const st = STATUS[item.kind];
+  const req = item.kind === 'blocked' ? null : (item.raw as PaymentRequest);
   return (
     <>
       <div className="detail-amount"><Amount yocto={item.amount} asset={item.asset} strong /></div>
@@ -155,8 +161,10 @@ function Detail({ item, memo }: { item: ActivityItem; memo: ReactNode }) {
         {item.reason && item.kind === 'blocked' && <><dt>Rule applied</dt><dd>{POLICY[item.reason] ?? item.reason}</dd></>}
         {item.reason && item.kind === 'Failed' && <><dt>Why it failed</dt><dd>{reasonText(item.reason)}</dd></>}
         {item.memo && <><dt>Memo</dt><dd>{memo}</dd></>}
+        {item.kind === 'PendingApproval' && req?.expires_at_ms && <><dt>Approve by</dt><dd>{new Date(req.expires_at_ms).toLocaleString()} ({req.expires_at_ms > b.now ? until(req.expires_at_ms, b.now) : 'passed'})</dd></>}
         {item.kind !== 'blocked' && <><dt>Funds</dt><dd>{item.kind === 'Settled' ? 'Left the vault' : item.kind === 'InFlight' ? 'Reserved, transfer pending' : item.kind === 'PendingApproval' ? 'Reserved, waiting for you' : 'Returned to the vault'}</dd></>}
       </dl>
+      {item.kind === 'InFlight' && req && <StuckPayment req={req} />}
       {b.explorer && (
         <p className="small"><a className="link" href={`${b.explorer}/address/${item.agent}`} target="_blank" rel="noreferrer">Find this transaction on NearBlocks ↗</a></p>
       )}
@@ -166,5 +174,48 @@ function Detail({ item, memo }: { item: ActivityItem; memo: ReactNode }) {
         <pre>{JSON.stringify(item.raw, null, 2)}</pre>
       </details>
     </>
+  );
+}
+
+/** A payment whose transfer result hasn't come back. Normally that takes a
+ *  few seconds; after the contract's recovery window the owner can record
+ *  what the explorer shows. */
+function StuckPayment({ req }: { req: PaymentRequest }) {
+  const b = useBanbo();
+  const [choice, setChoice] = useState<null | boolean>(null);
+  const since = req.dispatched_at_ms ?? req.created_at_ms;
+  const recoverAt = since + b.state!.config.in_flight_recovery_ms;
+  if (b.now < recoverAt) {
+    return b.now - since > 60_000
+      ? <p className="muted small">Still waiting for the transfer result. If it hasn’t arrived by {new Date(recoverAt).toLocaleTimeString()}, you’ll be able to settle it by hand here.</p>
+      : null;
+  }
+  return (
+    <div className="stuck">
+      <p className="small"><strong>The transfer result never came back.</strong> This is rare (the vault’s callback can run out of gas, for example). Check the recipient on the explorer, then record what happened. A late result after this is refused, so the payment still counts exactly once.</p>
+      {b.isOwner ? (
+        <div className="detail-actions">
+          <button className="btn" disabled={!!b.busy} onClick={() => setChoice(false)}>It wasn’t sent</button>
+          <button className="btn primary" disabled={!!b.busy} onClick={() => setChoice(true)}>It went through</button>
+        </div>
+      ) : <p className="muted small">Only the vault owner can do this.</p>}
+      <Dialog
+        open={choice !== null}
+        title={choice ? 'Mark as paid?' : 'Mark as not sent?'}
+        onClose={() => setChoice(null)}
+        footer={<>
+          <button className="btn" onClick={() => setChoice(null)}>Cancel</button>
+          <button className="btn primary" disabled={!!b.busy}
+            onClick={async () => { if (await b.act(choice ? 'Payment marked as paid' : 'Payment marked as not sent', 'reconcile_stuck', { key: req.key, transferred: choice })) setChoice(null); }}>
+            {b.busy ? 'Waiting for confirmation…' : 'Confirm'}
+          </button>
+        </>}
+      >
+        <p className="small">{choice
+          ? 'The amount moves from reserved to spent, as if the result had arrived.'
+          : 'The reservation is released and the amount counts as still in the vault. Only choose this if the recipient did not receive it.'}</p>
+        <p className="muted xs">Recovery opens {duration(b.state!.config.in_flight_recovery_ms)} after sending.</p>
+      </Dialog>
+    </div>
   );
 }

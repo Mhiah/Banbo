@@ -13,6 +13,7 @@ export default function Rules() {
   const [pending, setPending] = useState<Pending | null>(null);
   const [editCap, setEditCap] = useState<string | null>(null); // 'NEAR' or token id
   const [editRisk, setEditRisk] = useState(false);
+  const [editRetention, setEditRetention] = useState(false);
   const [editAgent, setEditAgent] = useState<{ id: string; token: string | null } | null>(null);
   const [newRecipient, setNewRecipient] = useState('');
   const [recErr, setRecErr] = useState('');
@@ -157,6 +158,21 @@ export default function Rules() {
         </div>
       </Panel>
 
+      <Panel title="Approvals and records" action={owner && <button className="btn" onClick={() => setEditRetention(true)}>Change</button>}>
+        <div className="risk-grid">
+          <div>
+            <div className="label">Approval window</div>
+            <div className="rule-value">{duration(s.config.approval_ttl_ms)}</div>
+            <p className="rule-desc">A payment waiting for your approval expires after this, and its reserved budget goes back to the agent. Nothing is sent.</p>
+          </div>
+          <div>
+            <div className="label">Payment records kept</div>
+            <div className="rule-value">{s.config.history_limit.toLocaleString()}</div>
+            <p className="rule-desc">Older finished records are deleted from the contract, which returns their storage deposit to the vault. Every payment stays on the public chain history.</p>
+          </div>
+        </div>
+      </Panel>
+
       <Panel title="Budget period">
         <div className="rule-row">
           <div className="rule-value">{hours} hours</div>
@@ -175,6 +191,7 @@ export default function Rules() {
       </Panel>
 
       {editRisk && <RiskDialog onClose={() => setEditRisk(false)} onReview={(p) => { setEditRisk(false); setPending(p); }} />}
+      {editRetention && <RetentionDialog onClose={() => setEditRetention(false)} onReview={(p) => { setEditRetention(false); setPending(p); }} />}
       {editCap && <CapDialog which={editCap} onClose={() => setEditCap(null)} onReview={(p) => { setEditCap(null); setPending(p); }} />}
       {editAgent && s.agents.some(([id]) => id === editAgent.id) && (
         <AgentDialog id={editAgent.id} token={editAgent.token} onClose={() => setEditAgent(null)} onReview={(p) => { setEditAgent(null); setPending(p); }} />
@@ -313,6 +330,47 @@ function RiskDialog({ onClose, onReview }: { onClose: () => void; onReview: (p: 
         <div className="form-row">
           <label className="field"><span>New recipient cooldown (minutes, 0 = off)</span><input value={minutes} onChange={(e) => setMinutes(e.target.value)} inputMode="decimal" autoFocus /></label>
           <label className="field"><span>Payments per agent per hour (0 = no limit)</span><input value={rate} onChange={(e) => setRate(e.target.value)} inputMode="numeric" /></label>
+        </div>
+        {err && <div className="form-err" role="alert">{err}</div>}
+      </form>
+    </Dialog>
+  );
+}
+
+function RetentionDialog({ onClose, onReview }: { onClose: () => void; onReview: (p: Pending) => void }) {
+  const b = useBanbo();
+  const c = b.state!.config;
+  const [hours, setHours] = useState(String(c.approval_ttl_ms / 3_600_000));
+  const [limit, setLimit] = useState(String(c.history_limit));
+  const [err, setErr] = useState('');
+  return (
+    <Dialog open title="Change approvals and records" onClose={onClose}
+      footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" form="retention-form">Review</button></>}>
+      <form id="retention-form" className="form" onSubmit={(e) => {
+        e.preventDefault();
+        const h = Number(hours), n = Number(limit);
+        if (!Number.isFinite(h) || h * 60 < 1 || h > 720) return setErr('The approval window must be between 1 minute and 720 hours (30 days).');
+        if (!Number.isInteger(n) || n < 100 || n > 10_000) return setErr('Records kept must be a whole number from 100 to 10,000.');
+        const ms = Math.round(h * 3_600_000);
+        if (ms === c.approval_ttl_ms && n === c.history_limit) return onClose();
+        // Two settings, two methods: review whichever changed (the TTL first).
+        if (ms !== c.approval_ttl_ms) {
+          onReview({
+            title: 'Review change', label: 'Approval window updated', method: 'set_approval_ttl', args: { approval_ttl_ms: ms },
+            rows: [['Approval window', duration(c.approval_ttl_ms), duration(ms)]],
+            note: n !== c.history_limit ? 'Change the records setting again after this one.' : 'Payments already waiting keep the deadline they were given.',
+          });
+        } else {
+          onReview({
+            title: 'Review change', label: 'Records setting updated', method: 'set_history_limit', args: { history_limit: n },
+            rows: [['Payment records kept', c.history_limit.toLocaleString(), n.toLocaleString()]],
+            note: n < c.history_limit ? 'Older records are deleted a few at a time as new payments come in.' : undefined,
+          });
+        }
+      }}>
+        <div className="form-row">
+          <label className="field"><span>Approval window (hours)</span><input value={hours} onChange={(e) => setHours(e.target.value)} inputMode="decimal" autoFocus /></label>
+          <label className="field"><span>Payment records kept (100 to 10,000)</span><input value={limit} onChange={(e) => setLimit(e.target.value)} inputMode="numeric" /></label>
         </div>
         {err && <div className="form-err" role="alert">{err}</div>}
       </form>
