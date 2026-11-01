@@ -36,6 +36,8 @@ const RECIPIENT_CHECK_GAS: Gas = Gas::from_tgas(40);
 /// Longest promise result we read from a token contract.
 const MAX_RESULT_LEN: usize = 512;
 const MAX_SYMBOL_LEN: usize = 12;
+/// Window for the per-agent payment rate limit.
+const RATE_WINDOW_MS: u64 = 3_600_000;
 /// Balance always kept back for storage and gas, never spendable by agents.
 const OPERATING_RESERVE: NearToken = NearToken::from_millinear(500);
 const MAX_MEMO_LEN: usize = 256;
@@ -54,6 +56,25 @@ enum StorageKey {
     Blocked,
     Tokens,
     TokenLimits,
+    RecipientAddedAt,
+    Rate,
+}
+
+/// How many payments an agent made in the current one-hour window.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct RateWindow {
+    pub window_start_ms: u64,
+    pub count: u32,
+}
+
+/// An allowed recipient and when it can first be paid.
+#[near(serializers = [json])]
+pub struct Recipient {
+    pub account: AccountId,
+    pub added_at_ms: u64,
+    /// added_at_ms + the cooldown it was added under (or the current one, if lower).
+    pub payable_from_ms: u64,
 }
 
 /// The NEP-141 methods Banbo calls.
@@ -202,6 +223,10 @@ pub struct Config {
     pub period_ms: u64,
     pub shared_cap: U128,
     pub current_period: u64,
+    /// A newly allowed recipient can't be paid for this long (0 = off).
+    pub recipient_cooldown_ms: u64,
+    /// Most payment requests one agent may make per hour (0 = no limit).
+    pub max_payments_per_hour: u32,
 }
 
 #[near(serializers = [json])]
@@ -240,6 +265,11 @@ pub struct Banbo {
     tokens: IterableMap<AccountId, Token>,
     /// Keyed by "agent|token".
     token_limits: LookupMap<String, Limits>,
+    recipient_cooldown_ms: u64,
+    max_payments_per_hour: u32,
+    /// recipient -> (added at, cooldown in force when it was added)
+    recipient_added_at: LookupMap<AccountId, (u64, u64)>,
+    rate: LookupMap<AccountId, RateWindow>,
 }
 
 fn event(kind: &str, data: String) {
@@ -296,6 +326,10 @@ impl Banbo {
             blocked_total: 0,
             tokens: IterableMap::new(StorageKey::Tokens),
             token_limits: LookupMap::new(StorageKey::TokenLimits),
+            recipient_cooldown_ms: 0,
+            max_payments_per_hour: 0,
+            recipient_added_at: LookupMap::new(StorageKey::RecipientAddedAt),
+            rate: LookupMap::new(StorageKey::Rate),
         }
     }
 
@@ -427,16 +461,48 @@ impl Banbo {
         );
     }
 
+    /// Allow a recipient. With a cooldown set, it can't be paid until the
+    /// cooldown has passed, which gives the owner time to notice a recipient
+    /// that was added by mistake or by someone who tricked them.
     pub fn allow_recipient(&mut self, recipient: AccountId) {
         self.assert_owner();
-        self.allowlist.insert(recipient.clone());
-        event("recipient_allowed", format!("{{\"recipient\":{}}}", esc(recipient.as_str())));
+        if self.allowlist.insert(recipient.clone()) {
+            self.recipient_added_at.insert(recipient.clone(), (env::block_timestamp_ms(), self.recipient_cooldown_ms));
+        }
+        event(
+            "recipient_allowed",
+            format!(
+                "{{\"recipient\":{},\"payable_from_ms\":{}}}",
+                esc(recipient.as_str()),
+                self.payable_from(&recipient)
+            ),
+        );
     }
 
     pub fn disallow_recipient(&mut self, recipient: AccountId) {
         self.assert_owner();
         self.allowlist.remove(&recipient);
+        self.recipient_added_at.remove(&recipient);
         event("recipient_removed", format!("{{\"recipient\":{}}}", esc(recipient.as_str())));
+    }
+
+    /// Recipient risk rules. `recipient_cooldown_ms`: how long a recipient
+    /// allowed from now on must wait before it can be paid (0 = off).
+    /// Recipients already allowed keep the cooldown they were added under,
+    /// and lowering the cooldown shortens it for everyone.
+    /// `max_payments_per_hour`: payment requests per agent per hour (0 = no
+    /// limit); stops slow-drip theft that stays under the amount limits.
+    pub fn set_risk_rules(&mut self, recipient_cooldown_ms: u64, max_payments_per_hour: u32) {
+        self.assert_owner();
+        self.recipient_cooldown_ms = recipient_cooldown_ms;
+        self.max_payments_per_hour = max_payments_per_hour;
+        event(
+            "risk_rules_set",
+            format!(
+                "{{\"recipient_cooldown_ms\":{},\"max_payments_per_hour\":{}}}",
+                recipient_cooldown_ms, max_payments_per_hour
+            ),
+        );
     }
 
     pub fn set_shared_cap(&mut self, shared_cap: U128) {
@@ -640,6 +706,9 @@ impl Banbo {
         };
         self.requests.insert(key.clone(), req.clone());
         self.request_order.push(key.clone());
+        let mut w = self.rolled_rate(&agent_id);
+        w.count += 1;
+        self.rate.insert(agent_id.clone(), w);
 
         let data = format!(
             "{{\"key\":{},\"agent\":{},\"recipient\":{},\"amount\":\"{}\",\"token\":{},\"memo\":{}}}",
@@ -730,7 +799,26 @@ impl Banbo {
             period_ms: self.period_ms,
             shared_cap: U128(self.shared_cap),
             current_period: self.current_period(),
+            recipient_cooldown_ms: self.recipient_cooldown_ms,
+            max_payments_per_hour: self.max_payments_per_hour,
         }
+    }
+
+    /// Allowed recipients with when each can first be paid.
+    pub fn list_recipients(&self) -> Vec<Recipient> {
+        self.allowlist
+            .iter()
+            .map(|r| Recipient {
+                account: r.clone(),
+                added_at_ms: self.recipient_added_at.get(r).map(|x| x.0).unwrap_or(0),
+                payable_from_ms: self.payable_from(r),
+            })
+            .collect()
+    }
+
+    /// Payment requests this agent made in the current one-hour window.
+    pub fn get_agent_rate(&self, agent: AccountId) -> RateWindow {
+        self.rolled_rate(&agent)
     }
 
     /// Agent with counters as they apply to the current period.
@@ -836,6 +924,21 @@ impl Banbo {
             self.blocked.push(b);
         }
         self.blocked_total += 1;
+    }
+
+    fn payable_from(&self, recipient: &AccountId) -> u64 {
+        match self.recipient_added_at.get(recipient) {
+            Some((at, cooldown)) => at + (*cooldown).min(self.recipient_cooldown_ms),
+            None => 0,
+        }
+    }
+
+    fn rolled_rate(&self, agent: &AccountId) -> RateWindow {
+        let now = env::block_timestamp_ms();
+        match self.rate.get(agent) {
+            Some(w) if now < w.window_start_ms + RATE_WINDOW_MS => w.clone(),
+            _ => RateWindow { window_start_ms: now, count: 0 },
+        }
     }
 
     fn assert_owner(&self) {
@@ -1029,6 +1132,12 @@ impl Banbo {
         }
         if !self.allowlist.contains(recipient) {
             return Err("recipient_not_allowlisted".into());
+        }
+        if env::block_timestamp_ms() < self.payable_from(recipient) {
+            return Err("recipient_in_cooldown".into());
+        }
+        if self.max_payments_per_hour > 0 && self.rolled_rate(agent_id).count >= self.max_payments_per_hour {
+            return Err("exceeds_payment_rate".into());
         }
         if self.get_limits(agent_id, token).is_none() {
             return Err("token_not_enabled_for_agent".into());

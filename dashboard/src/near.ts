@@ -94,6 +94,17 @@ export interface Config {
   period_ms: number;
   shared_cap: string;
   current_period: number;
+  recipient_cooldown_ms: number;
+  max_payments_per_hour: number;
+}
+export interface Recipient {
+  account: string;
+  added_at_ms: number;
+  payable_from_ms: number;
+}
+export interface RateWindow {
+  window_start_ms: number;
+  count: number;
 }
 export interface VaultState {
   config: Config;
@@ -106,6 +117,9 @@ export interface VaultState {
   tokens: TokenView[];
   /** agent → [token, limits][] */
   tokenLimits: Record<string, [string, Limits][]>;
+  recipients: Recipient[];
+  /** agent → payments in the current one-hour window */
+  rates: Record<string, RateWindow>;
 }
 
 export function assetOf(state: Pick<VaultState, 'tokens'>, token: string | null | undefined): Asset {
@@ -144,7 +158,7 @@ export async function view<T>(nodeUrl: string, contractId: string, method: strin
 
 export async function loadVault(nodeUrl: string, contractId: string): Promise<VaultState> {
   const v = <T,>(m: string, a: object = {}) => view<T>(nodeUrl, contractId, m, a);
-  const [config, balances, agents, allowlist, requests, blocked, blockedCount, tokens] = await Promise.all([
+  const [config, balances, agents, allowlist, requests, blocked, blockedCount, tokens, recipients] = await Promise.all([
     v<Config>('get_config'),
     v<Balances>('get_balances'),
     v<[string, Agent][]>('list_agents'),
@@ -153,13 +167,17 @@ export async function loadVault(nodeUrl: string, contractId: string): Promise<Va
     v<BlockedAttempt[]>('list_blocked'),
     v<number>('blocked_count'),
     v<TokenView[]>('list_tokens'),
+    v<Recipient[]>('list_recipients'),
   ]);
+  const rateList = await Promise.all(agents.map(([id]) => v<RateWindow>('get_agent_rate', { agent: id })));
+  const rates: Record<string, RateWindow> = {};
+  agents.forEach(([id], i) => (rates[id] = rateList[i]));
   const tokenLimits: Record<string, [string, Limits][]> = {};
   if (tokens.length) {
     const lists = await Promise.all(agents.map(([id]) => v<[string, Limits][]>('get_agent_token_limits', { agent: id })));
     agents.forEach(([id], i) => (tokenLimits[id] = lists[i]));
   }
-  return { config, balances, agents, allowlist, requests, blocked, blockedCount, tokens, tokenLimits };
+  return { config, balances, agents, allowlist, requests, blocked, blockedCount, tokens, tokenLimits, recipients, rates };
 }
 
 // ------------------------------------------------------------------ writes

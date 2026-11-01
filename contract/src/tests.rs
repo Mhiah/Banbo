@@ -585,3 +585,108 @@ fn only_owner_configures_tokens() {
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| c.add_token(usdc(), "USDC".into(), 6, U128(1))));
     assert!(r.is_err());
 }
+
+// ------------------------------------------------------------ risk rules
+
+fn pay_at(c: &mut Banbo, n: u8, id: &str, to: AccountId, yocto: u128, ts: u64) -> RequestOutcome {
+    ctx(agent(n), 10, ts);
+    c.request_payment(id.into(), to, U128(yocto), None, None)
+}
+
+fn newcomer() -> AccountId {
+    "new-vendor.testnet".parse().unwrap()
+}
+
+#[test]
+fn newly_allowed_recipient_waits_out_the_cooldown() {
+    let mut c = setup(); // vendor allowed at t=1s, before any cooldown
+    ctx(owner(), 10, 1_000);
+    c.set_risk_rules(60_000, 0);
+    ctx(owner(), 10, 100_000);
+    c.allow_recipient(newcomer());
+    let r = c.list_recipients().into_iter().find(|r| r.account == newcomer()).unwrap();
+    assert_eq!((r.added_at_ms, r.payable_from_ms), (100_000, 160_000));
+
+    assert_eq!(pay_at(&mut c, 1, "a", newcomer(), NEAR / 10, 159_999), RequestOutcome::Rejected { reason: "recipient_in_cooldown".into() });
+    assert_eq!(c.list_blocked(None)[0].reason, "recipient_in_cooldown");
+    // The long-standing vendor is past its cooldown.
+    assert!(matches!(pay_at(&mut c, 1, "b", vendor(), NEAR / 10, 159_999), RequestOutcome::Dispatched { .. }));
+    assert!(matches!(pay_at(&mut c, 1, "c", newcomer(), NEAR / 10, 160_000), RequestOutcome::Dispatched { .. }));
+}
+
+#[test]
+fn re_allowing_keeps_the_clock_but_removing_resets_it() {
+    let mut c = setup();
+    ctx(owner(), 10, 1_000);
+    c.set_risk_rules(60_000, 0);
+    c.allow_recipient(newcomer());
+    ctx(owner(), 10, 50_000);
+    c.allow_recipient(newcomer()); // no-op for the clock
+    assert!(matches!(pay_at(&mut c, 1, "a", newcomer(), NEAR / 10, 61_000), RequestOutcome::Dispatched { .. }));
+    ctx(owner(), 10, 70_000);
+    c.disallow_recipient(newcomer());
+    c.allow_recipient(newcomer());
+    assert_eq!(pay_at(&mut c, 1, "b", newcomer(), NEAR / 10, 80_000), RequestOutcome::Rejected { reason: "recipient_in_cooldown".into() });
+}
+
+#[test]
+fn cooldown_off_by_default() {
+    let mut c = setup();
+    ctx(owner(), 10, 1_000);
+    c.allow_recipient(newcomer());
+    assert!(matches!(pay_at(&mut c, 1, "a", newcomer(), NEAR / 10, 1_001), RequestOutcome::Dispatched { .. }));
+    assert_eq!(c.get_config().recipient_cooldown_ms, 0);
+}
+
+#[test]
+fn payment_rate_stops_slow_drip() {
+    let mut c = setup();
+    ctx(owner(), 10, 1_000);
+    c.set_risk_rules(0, 3);
+    let tiny = NEAR / 100;
+    for i in 0..3 {
+        assert!(matches!(pay_at(&mut c, 1, &format!("d{i}"), vendor(), tiny, 2_000 + i), RequestOutcome::Dispatched { .. }));
+    }
+    assert_eq!(pay_at(&mut c, 1, "d3", vendor(), tiny, 3_000), RequestOutcome::Rejected { reason: "exceeds_payment_rate".into() });
+    // Rejections don't use up the allowance; other agents have their own.
+    assert_eq!(c.get_agent_rate(agent(1)).count, 3);
+    assert!(matches!(pay_at(&mut c, 2, "e0", vendor(), tiny, 3_000), RequestOutcome::Dispatched { .. }));
+    // A new hour starts a new window.
+    assert!(matches!(pay_at(&mut c, 1, "d4", vendor(), tiny, 2_000 + 3_600_000), RequestOutcome::Dispatched { .. }));
+    assert_eq!(c.get_agent_rate(agent(1)).count, 1);
+}
+
+#[test]
+fn duplicates_and_blocked_attempts_do_not_count_toward_the_rate() {
+    let mut c = setup();
+    ctx(owner(), 10, 1_000);
+    c.set_risk_rules(0, 2);
+    pay_at(&mut c, 1, "x", vendor(), NEAR / 100, 2_000);
+    pay_at(&mut c, 1, "x", vendor(), NEAR / 100, 2_001); // duplicate
+    pay_at(&mut c, 1, "y", attacker(), NEAR / 100, 2_002); // blocked
+    assert_eq!(c.get_agent_rate(agent(1)).count, 1);
+    assert!(matches!(pay_at(&mut c, 1, "z", vendor(), NEAR / 100, 2_003), RequestOutcome::Dispatched { .. }));
+}
+
+#[test]
+fn only_owner_sets_risk_rules() {
+    let mut c = setup();
+    ctx(agent(1), 10, 1_000);
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| c.set_risk_rules(0, 0)));
+    assert!(r.is_err());
+}
+
+#[test]
+fn cooldown_applies_to_recipients_added_under_it_and_lowering_releases() {
+    let mut c = setup(); // vendor added with no cooldown
+    ctx(owner(), 10, 1_000);
+    c.set_risk_rules(3_600_000, 0);
+    assert!(matches!(pay_at(&mut c, 1, "v", vendor(), NEAR / 10, 2_000), RequestOutcome::Dispatched { .. }));
+    ctx(owner(), 10, 2_000);
+    c.allow_recipient(newcomer());
+    assert_eq!(pay_at(&mut c, 1, "n1", newcomer(), NEAR / 10, 10_000), RequestOutcome::Rejected { reason: "recipient_in_cooldown".into() });
+    // Owner checks the newcomer and lowers the cooldown to 5 s: it is now payable.
+    ctx(owner(), 10, 10_000);
+    c.set_risk_rules(5_000, 0);
+    assert!(matches!(pay_at(&mut c, 1, "n2", newcomer(), NEAR / 10, 10_000), RequestOutcome::Dispatched { .. }));
+}

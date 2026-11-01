@@ -15,7 +15,7 @@ test-sandbox:     ## integration tests on a local NEAR node
 
 test: test-contract test-sandbox
 
-demo:             ## the 5-act demo (uses Claude if ANTHROPIC_API_KEY is set)
+demo:             ## the 6-act demo (uses Claude if ANTHROPIC_API_KEY is set)
 	cd demo && npm run demo
 
 sandbox:          ## local NEAR node + seeded vault + API for the dashboard

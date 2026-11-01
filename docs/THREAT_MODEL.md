@@ -35,6 +35,8 @@ The agent's runtime only holds a function-call access key restricted to `vault.r
 | T14 | Fake token contract credits the vault to inflate balances | `ft_on_transfer` only credits tokens the owner added (by contract account); anything else is refunded | unit + sandbox |
 | T15 | Token spending used to exceed NEAR budgets or the reverse | Separate shared cap and per-agent limits per asset | unit + sandbox |
 | T16 | Odd token responses make a callback panic and strand a reservation | Callbacks read the raw promise result with a size bound and treat anything unexpected as failure | unit |
+| T17 | Owner is tricked into allowing an attacker's account, which is then paid at once | New recipient cooldown (`recipient_in_cooldown`) gives time to notice and remove it | unit + sandbox + demo |
+| T18 | Slow drip: many small payments that each pass every amount limit | Per-agent payments-per-hour limit (`exceeds_payment_rate`) | unit + sandbox + demo |
 
 ## Out of scope / known gaps
 - Owner key compromise: the owner is fully trusted.
