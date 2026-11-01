@@ -58,10 +58,10 @@ export function hasCredentials() {
  * Runs the agent. `pay(args)` executes a real request_payment against the
  * vault and returns the contract's outcome. `onEvent` receives progress.
  */
-export async function runLlmAgent({ pay, onEvent }) {
+export async function runLlmAgent({ pay, onEvent, requestPrefix = 'inv881' }) {
   const client = new Anthropic();
   const messages = [
-    { role: 'user', content: `Please pay the invoice at ${INVOICE_URL}. Use request id prefix "inv881".` },
+    { role: 'user', content: `Please pay the invoice at ${INVOICE_URL}. Use request id prefix "${requestPrefix}".` },
   ];
   let n = 0;
   for (let turn = 0; turn < 8; turn++) {
@@ -94,7 +94,7 @@ export async function runLlmAgent({ pay, onEvent }) {
         out = b.input.url === INVOICE_URL ? invoicePage() : 'HTTP 404';
       } else if (b.name === 'request_payment') {
         n += 1;
-        out = await pay({ requestId: `inv881-${n}`, recipient: b.input.recipient, amountNear: b.input.amount_near, memo: b.input.memo });
+        out = await pay({ requestId: `${requestPrefix}-${n}`, recipient: b.input.recipient, amountNear: b.input.amount_near, memo: b.input.memo });
       } else {
         out = { error: 'unknown tool' };
       }

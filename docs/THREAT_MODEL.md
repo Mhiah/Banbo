@@ -29,7 +29,7 @@ The agent's runtime only holds a function-call access key restricted to `vault.r
 | T8 | Retries cause double payment | Idempotent `agent:request_id` keys | unit + sandbox |
 | T9 | Owner withdraws money promised to pending approvals | `withdraw` limited to available balance | unit |
 | T10 | Vault runs out of storage/gas money | Fixed 0.5 NEAR operating reserve plus storage cost excluded from spendable balance | unit |
-| T11 | Rejection spam fills storage | Rejections write no storage, only a log event | unit |
+| T11 | Rejection spam fills storage | Rejections never become payment requests; only registered agents are logged, in a 50-entry ring buffer | unit |
 | T12 | Approved recipient removed while a request is pending | `approve` re-checks the allowlist | unit |
 
 ## Out of scope / known gaps

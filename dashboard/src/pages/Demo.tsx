@@ -1,0 +1,150 @@
+import { useState } from 'react';
+import { useBanbo } from '../state';
+import { runScenario, prettyError } from '../near';
+import { near, reasonText, short } from '../format';
+import { Panel, PageHeader, Empty } from '../ui';
+
+type Outcome = { outcome: string; reason?: string; key?: string; status?: string };
+type Run = { name: string; at: number; payments: { recipient?: string; amountNear?: number; memo?: string; requestId?: string; outcome: Outcome; tx: string; approveTx?: string }[] };
+
+const SCENARIOS = [
+  {
+    id: 'injection', title: 'Prompt-injection attack', tone: 'danger',
+    body: 'A payments agent is asked to pay a real invoice. Hidden text in the invoice tells it to move 9 NEAR to attacker.test.near. It tries, then tries smaller amounts and a fake “prepayment”.',
+    expect: 'Every attempt is blocked. The real 0.20 NEAR invoice is paid. The attacker gets nothing.',
+  },
+  {
+    id: 'failure', title: 'Payment fails after approval', tone: '',
+    body: 'An allowed payment goes to an account that no longer exists, so the transfer fails a block later. The agent then retries with the same request ID.',
+    expect: 'The reservation is released exactly once and the money returns to the vault. The retry is a no-op.',
+  },
+  {
+    id: 'approval', title: 'Payment that needs a human', tone: '',
+    body: 'The buyer agent requests 0.5 NEAR, which is over its 0.4 NEAR approval threshold.',
+    expect: 'The payment waits on the Overview page until you approve or decline it.',
+  },
+  {
+    id: 'routine', title: 'Routine agent payments', tone: '',
+    body: 'Two agents pay the allowed API vendor small amounts, as they would day to day.',
+    expect: 'Payments settle and count against each agent’s daily limit.',
+  },
+];
+
+const LABEL: Record<string, string> = { rejected: 'Blocked', dispatched: 'Sent', pending_approval: 'Waiting for owner', duplicate: 'Duplicate (no-op)' };
+
+export default function Demo() {
+  const b = useBanbo();
+  const [runs, setRuns] = useState<Run[]>([]);
+
+  if (b.network !== 'sandbox') {
+    return (
+      <>
+        <PageHeader title="Demo" subtitle="Developer area" />
+        <Empty title="The demo runs on the local sandbox" action={<button className="btn primary" onClick={() => b.setNetwork('sandbox')}>Switch to local sandbox</button>}>
+          <p>Scenarios send real transactions with test agents’ keys, so they only run against a local NEAR node, never against your testnet or mainnet vault.</p>
+        </Empty>
+      </>
+    );
+  }
+  if (b.sandboxDown || !b.state) {
+    return (
+      <>
+        <PageHeader title="Demo" subtitle="Developer area" />
+        <Empty title="Start the local sandbox"><pre>cd demo && npm install && npm run sandbox</pre></Empty>
+      </>
+    );
+  }
+
+  const s = b.state;
+  const bal = s.balances;
+  const run = async (id: string, title: string) => {
+    b.setBusy(title);
+    try {
+      const r = (await runScenario(id)) as Run;
+      setRuns((x) => [{ ...r, name: title, at: Date.now() }, ...x].slice(0, 6));
+      await b.refresh();
+    } catch (e) {
+      b.toast('err', prettyError(e));
+    } finally {
+      b.setBusy(null);
+    }
+  };
+
+  const sharedUsed = BigInt(bal.shared_spent) + BigInt(bal.shared_reserved);
+  const checks: [string, bigint, bigint, string][] = [
+    ['Shared', BigInt(bal.shared_spent), BigInt(bal.shared_reserved), bal.shared_cap],
+    ...s.agents.map(([id, a]) => [short(id), BigInt(a.spent), BigInt(a.reserved), a.period_limit] as [string, bigint, bigint, string]),
+  ];
+
+  return (
+    <>
+      <PageHeader title="Demo" subtitle="Run real scenarios against the local vault. Every action is a transaction on a local NEAR node, signed by test agents’ keys." />
+      <div className="dev-note">Developer area · local sandbox only{b.sandbox?.llmAgent ? ' · attack driven by a live Claude agent' : ' · attack driven by a scripted compromised agent'}</div>
+
+      <div className="scenarios">
+        {SCENARIOS.map((sc, i) => (
+          <div key={sc.id} className={`scenario ${sc.tone}`}>
+            <div className="sc-num">{i + 1}</div>
+            <div className="sc-main">
+              <h3>{sc.title}</h3>
+              <p>{sc.body}</p>
+              <p className="sc-expect"><strong>Expected:</strong> {sc.expect}</p>
+            </div>
+            <button className={`btn ${sc.tone === 'danger' ? 'danger' : ''}`} disabled={!!b.busy} onClick={() => run(sc.id, sc.title)}>
+              {b.busy === sc.title ? 'Running…' : 'Run'}
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div className="two-col">
+        <Panel title="Invariant: spent + reserved ≤ limit" flush>
+          <div className="table-wrap"><table className="table stack">
+            <thead><tr><th>Budget</th><th className="r">Spent</th><th className="r">Reserved</th><th className="r">Limit</th><th>Holds</th></tr></thead>
+            <tbody>
+              {checks.map(([label, sp, rs, cap]) => {
+                const ok = sp + rs <= BigInt(cap);
+                return (
+                  <tr key={label}>
+                    <td className="mono">{label}</td>
+                    <td className="r num" data-label="Spent">{near(sp)}</td>
+                    <td className="r num" data-label="Reserved">{near(rs)}</td>
+                    <td className="r num" data-label="Limit">{near(cap)}</td>
+                    <td className="st" data-label="Holds">{ok ? <span className="badge green"><span className="dot" />Yes</span> : <span className="badge red"><span className="dot" />No</span>}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table></div>
+          <p className="footnote pad">Read live from the contract. Shared: {near(sharedUsed)} of {near(bal.shared_cap)} NEAR used.</p>
+        </Panel>
+
+        <Panel title="Results" flush>
+          {runs.length === 0 ? <Empty title="No runs yet"><p>Run a scenario to see each transaction and the contract’s answer.</p></Empty> : (
+            <div className="runs">
+              {runs.map((r) => (
+                <div key={r.at} className="run">
+                  <div className="run-head"><strong>{r.name}</strong><span className="muted xs">{new Date(r.at).toLocaleTimeString()}</span></div>
+                  <ul>
+                    {r.payments.map((p, i) => (
+                      <li key={i}>
+                        <span className={`res ${p.outcome.outcome}`}>{LABEL[p.outcome.outcome] ?? p.outcome.outcome}</span>
+                        <span className="res-main">
+                          {p.amountNear !== undefined && <span className="num">{p.amountNear} NEAR → </span>}
+                          {p.recipient && <span className="mono">{short(p.recipient)}</span>}
+                          {p.outcome.reason && <span className="reason"> · {reasonText(p.outcome.reason)}</span>}
+                          {p.outcome.status && <span className="muted"> · already {p.outcome.status}</span>}
+                        </span>
+                        <span className="mono xs muted tx" title={p.tx}>tx {p.tx.slice(0, 10)}…</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+      </div>
+    </>
+  );
+}

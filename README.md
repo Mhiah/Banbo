@@ -1,6 +1,8 @@
-# Banbo
+# Banbo: the wallet firewall for AI agents
 
-**An agent wallet firewall on NEAR.** AI agents can pay for things from a shared treasury, but they never hold the treasury's keys. Every payment goes through a NEAR contract that enforces the owner's rules, even when the agent has been prompt-injected.
+**Enforced by the contract, not the prompt.**
+
+Banbo is a wallet firewall for AI agents on NEAR. AI agents can pay for things from a shared treasury, but they never hold the treasury's keys. Every payment goes through a NEAR contract that enforces the owner's rules, even when the agent has been prompt-injected.
 
 Built at NEAR HACKATHON (Nov 2026). Tracks: **AI Security & Defense**, Agent Economy.
 
@@ -37,6 +39,26 @@ The demo starts a real local NEAR node, deploys the contract and runs three acts
 With `ANTHROPIC_API_KEY` set, Act 1 is driven by a real Claude agent whose only payment tool is the vault. Without a key (or with `npm run demo:scripted`), a scripted compromised agent makes the same attempts. If the model spots the injection and refuses, the demo replays the attack as a compromised agent anyway, because the vault must not depend on the model resisting.
 
 A transaction log is written to `demo/out/demo-report.json`.
+
+## Owner dashboard
+
+The dashboard is where the vault owner watches spending and changes the rules: treasury and daily budget, agents and their limits, allowed recipients, payments waiting for approval, every blocked attempt with the rule that stopped it, and an emergency pause.
+
+![Overview](docs/screenshots/overview.png)
+
+Run it locally against a seeded sandbox vault:
+
+```bash
+make setup
+make sandbox     # terminal 1: local NEAR node, vault, test agents, API on :3031
+make dashboard   # terminal 2: http://localhost:5173
+```
+
+Everything on screen is read from the contract every 2 seconds. A change shows as done only after the transaction is confirmed on chain. On the sandbox, owner actions are signed by the sandbox process, so keys never reach the browser. On testnet and mainnet you connect the owner wallet (Meteor, MyNearWallet, HERE or Intear) and sign each change yourself. The **Demo** page (sandbox only) runs the prompt-injection attack and the other scenarios as real transactions.
+
+| Activity | On a phone |
+| --- | --- |
+| ![Activity](docs/screenshots/activity.png) | ![Activity on mobile](docs/screenshots/activity-mobile.png) |
 
 ## How it works
 
@@ -98,8 +120,10 @@ demo/
   src/vault.js       sandbox setup helpers
   src/agent.js       Claude agent + scripted compromised agent
   src/demo.js        the 3-act demo
+  src/sandbox.js     long-running sandbox + local API for the dashboard
   test/              sandbox integration tests
   fixtures/          the poisoned invoice
+dashboard/           owner dashboard (Vite + React)
 scripts/
   deploy-testnet.sh  deploy + give an agent a restricted key on testnet
 docs/THREAT_MODEL.md

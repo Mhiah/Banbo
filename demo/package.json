@@ -7,7 +7,8 @@
     "postinstall": "node scripts/fetch-sandbox.mjs",
     "test": "node --test --test-concurrency=1 test/*.test.js",
     "demo": "node src/demo.js",
-    "demo:scripted": "node src/demo.js --scripted"
+    "demo:scripted": "node src/demo.js --scripted",
+    "sandbox": "node src/sandbox.js"
   },
   "engines": {
     "node": ">=20"
