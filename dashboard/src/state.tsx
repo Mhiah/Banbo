@@ -1,0 +1,124 @@
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
+import {
+  NETWORKS, type NetworkId, type VaultState, type Writer, type SandboxConfig, type WalletHandle,
+  loadVault, sandboxConfig, sandboxWriter, wallet, walletWriter, prettyError,
+} from './near';
+
+export type Toast = { id: number; kind: 'ok' | 'err'; text: string };
+
+const ls = {
+  get: (k: string, d = '') => localStorage.getItem(`banbo:${k}`) ?? d,
+  set: (k: string, v: string) => localStorage.setItem(`banbo:${k}`, v),
+};
+
+function useBanboState() {
+  const [network, setNetworkRaw] = useState<NetworkId>(() => (ls.get('network', 'sandbox') as NetworkId));
+  const [contractInput, setContractInput] = useState(() => ls.get(`contract:${ls.get('network', 'sandbox')}`));
+  const [sandbox, setSandbox] = useState<SandboxConfig | null>(null);
+  const [sandboxDown, setSandboxDown] = useState(false);
+  const [handle, setHandle] = useState<WalletHandle | null>(null);
+  const [writer, setWriter] = useState<Writer | null>(null);
+  const [state, setState] = useState<VaultState | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now());
+
+  const nodeUrl = network === 'sandbox' ? sandbox?.nodeUrl ?? '' : NETWORKS[network].nodeUrl;
+  const contractId = network === 'sandbox' ? sandbox?.contractId ?? '' : contractInput.trim();
+  const explorer = NETWORKS[network].explorer;
+
+  const toast = useCallback((kind: Toast['kind'], text: string) => {
+    const id = Date.now() + Math.random();
+    setToasts((t) => [...t, { id, kind, text }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === 'err' ? 8000 : 4000);
+  }, []);
+
+  const setNetwork = (n: NetworkId) => {
+    ls.set('network', n);
+    setContractInput(ls.get(`contract:${n}`));
+    setNetworkRaw(n);
+  };
+  const setContract = (v: string) => { setContractInput(v); ls.set(`contract:${network}`, v.trim()); };
+
+  // network switch
+  useEffect(() => {
+    setState(null); setLoadError(null); setWriter(null); setHandle(null); setSandboxDown(false);
+    if (network !== 'sandbox') return;
+    let stop = false;
+    const connect = () => sandboxConfig()
+      .then((cfg) => { if (!stop) { setSandbox(cfg); setWriter(sandboxWriter(cfg)); setSandboxDown(false); } })
+      .catch(() => { if (!stop) { setSandbox(null); setSandboxDown(true); setTimeout(connect, 3000); } });
+    connect();
+    return () => { stop = true; };
+  }, [network]);
+
+  // wallet
+  useEffect(() => {
+    if (network === 'sandbox' || !contractId) return;
+    let unsub: (() => void) | undefined;
+    wallet(network, contractId).then((h) => {
+      setHandle(h);
+      setWriter(walletWriter(h, contractId));
+      const sub = h.selector.store.observable.subscribe(() => setWriter(walletWriter(h, contractId)));
+      unsub = () => sub.unsubscribe();
+    }).catch((e) => toast('err', `Wallet: ${prettyError(e)}`));
+    return () => unsub?.();
+  }, [network, contractId, toast]);
+
+  const refresh = useCallback(async () => {
+    if (!nodeUrl || !contractId) return;
+    try {
+      setState(await loadVault(nodeUrl, contractId));
+      setLoadError(null);
+    } catch (e) {
+      setLoadError(prettyError(e));
+      if (network === 'sandbox') { setSandboxDown(true); setSandbox(null); }
+    }
+  }, [nodeUrl, contractId, network]);
+
+  useEffect(() => {
+    refresh();
+    const t = setInterval(() => { refresh(); setNow(Date.now()); }, 2000);
+    return () => clearInterval(t);
+  }, [refresh]);
+
+  const isOwner = !!state && !!writer?.accountId && writer.accountId === state.config.owner;
+
+  /** Sign and send an owner action. Resolves true once confirmed. */
+  const act = useCallback(async (label: string, method: string, args: object = {}, deposit?: string): Promise<boolean> => {
+    if (!writer) return false;
+    setBusy(label);
+    try {
+      await writer.call(method, args, deposit);
+      await refresh();
+      toast('ok', label);
+      return true;
+    } catch (e) {
+      toast('err', prettyError(e));
+      return false;
+    } finally {
+      setBusy(null);
+    }
+  }, [writer, refresh, toast]);
+
+  return {
+    network, setNetwork, contractInput, setContract, contractId, nodeUrl, explorer,
+    sandbox, sandboxDown, handle, writer, state, loadError, toasts, toast, busy, setBusy, now,
+    isOwner, refresh, act,
+  };
+}
+
+export type Banbo = ReturnType<typeof useBanboState>;
+const Ctx = createContext<Banbo | null>(null);
+
+export function BanboProvider({ children }: { children: ReactNode }) {
+  const v = useBanboState();
+  return <Ctx.Provider value={v}>{children}</Ctx.Provider>;
+}
+
+export function useBanbo(): Banbo {
+  const v = useContext(Ctx);
+  if (!v) throw new Error('useBanbo outside provider');
+  return v;
+}

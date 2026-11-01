@@ -4,3 +4,4 @@ demo/out/
 .env
 *.log
 .near-credentials/
+dashboard/dist/
