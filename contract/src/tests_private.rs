@@ -607,3 +607,48 @@ fn attestation_ttl_has_a_floor() {
     ctx(owner(), 2_000);
     c.set_tee_policy(true, 1_000, false);
 }
+
+// A genuine Intel TDX quote (dcap-qvl sample, collateral valid 2025-06-19..07-19).
+const REAL_QUOTE: &[u8] = include_bytes!("../test-data/tdx_quote.bin");
+const REAL_COLLATERAL: &str = include_str!("../test-data/tdx_quote_collateral.json");
+const IN_WINDOW_SECS: u64 = 1_751_328_000; // 2025-07-01
+
+fn real_attestation() -> TeeAttestation {
+    let (_, tcb) = synthetic(TEE_AGENT);
+    TeeAttestation {
+        quote: hex::encode(REAL_QUOTE),
+        collateral: near_sdk::serde_json::from_str(REAL_COLLATERAL).unwrap(),
+        tcb_info: tcb,
+    }
+}
+
+#[test]
+fn real_intel_quote_passes_signature_checks_and_is_then_bound_to_the_caller() {
+    let rd = tee::expected_report_data(TEE_AGENT).unwrap();
+    let err = match tee::verify(&real_attestation(), &rd, IN_WINDOW_SECS, true, &approved(), &[]) {
+        Ok(_) => panic!("someone else's quote must not verify"),
+        Err(e) => e,
+    };
+    // Intel's signature chain and collateral were accepted; what stops it is
+    // that the quote was made for a different VM and key.
+    assert!(!err.starts_with("quote rejected"), "{err}");
+    assert!(err.contains("report_data") || err.contains("TCB status"), "{err}");
+}
+
+#[test]
+fn real_quote_is_rejected_once_its_collateral_has_expired() {
+    let rd = tee::expected_report_data(TEE_AGENT).unwrap();
+    let err = tee::verify(&real_attestation(), &rd, IN_WINDOW_SECS + 120 * 86_400, true, &approved(), &[]).err().unwrap();
+    assert!(err.starts_with("quote rejected"), "{err}");
+}
+
+#[test]
+fn tampered_real_quote_fails_intel_verification() {
+    let mut att = real_attestation();
+    let mut q = REAL_QUOTE.to_vec();
+    q[600] ^= 0x01; // inside the signed TD report
+    att.quote = hex::encode(q);
+    let rd = tee::expected_report_data(TEE_AGENT).unwrap();
+    let err = tee::verify(&att, &rd, IN_WINDOW_SECS, true, &approved(), &[]).err().unwrap();
+    assert!(err.starts_with("quote rejected"), "{err}");
+}

@@ -8,6 +8,11 @@ license = "MIT"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# Measurement-only build: exposes `probe_tee_verify` to time Intel quote
+# verification on a real node. Never deployed.
+tee-gas-probe = []
+
 [dependencies]
 near-sdk = "5.30.0"
 dcap-qvl = { version = "=0.5.2", default-features = false, features = ["contract", "borsh", "std", "ring", "default-x509"] }

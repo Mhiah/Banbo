@@ -749,6 +749,18 @@ impl Banbo {
         self.record_attestation(&agent_id, v)
     }
 
+    /// Measurement-only (feature `tee-gas-probe`): run the full quote check at
+    /// a chosen time so its gas can be measured with a sample quote.
+    #[cfg(feature = "tee-gas-probe")]
+    pub fn probe_tee_verify(&self, attestation: TeeAttestation, now_secs: u64, account: String) -> String {
+        let rd = tee::expected_report_data(&account).unwrap_or_else(|e| env::panic_str(&e));
+        let ms: Vec<(String, TeeMeasurement)> = self.tee_measurements.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        match tee::verify(&attestation, &rd, now_secs, true, &ms, &[]) {
+            Ok(v) => format!("ok {}", v.measurement_id),
+            Err(e) => e,
+        }
+    }
+
     pub fn set_shared_cap(&mut self, shared_cap: U128) {
         self.assert_owner();
         self.shared_cap = shared_cap.0;
