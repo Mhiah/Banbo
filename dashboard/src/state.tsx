@@ -1,8 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import {
   NETWORKS, type NetworkId, type VaultState, type Writer, type SandboxConfig, type WalletHandle,
-  loadVault, sandboxConfig, sandboxWriter, wallet, walletWriter, prettyError,
+  loadVault, sandboxConfig, sandboxWriter, wallet, walletWriter, prettyError, signUnlock,
 } from './near';
+import { keyPairFromPassphrase, keyPairFromSignature, unlockMessage, unlockNonce, type OwnerKeys } from './privacy';
 
 export type Toast = { id: number; kind: 'ok' | 'err'; text: string };
 
@@ -23,6 +24,8 @@ function useBanboState() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
+  // Private-mode key: memory only, gone on reload or vault switch.
+  const [keys, setKeys] = useState<OwnerKeys | null>(null);
 
   const nodeUrl = network === 'sandbox' ? sandbox?.nodeUrl ?? '' : NETWORKS[network].nodeUrl;
   const contractId = network === 'sandbox' ? sandbox?.contractId ?? '' : contractInput.trim();
@@ -40,6 +43,25 @@ function useBanboState() {
     setNetworkRaw(n);
   };
   const setContract = (v: string) => { setContractInput(v); ls.set(`contract:${network}`, v.trim()); };
+
+  useEffect(() => setKeys(null), [network, contractId]);
+
+  /** Derive the private-mode key. Returns it, or null after showing why not. */
+  const deriveWithWallet = useCallback(async (): Promise<OwnerKeys | null> => {
+    if (!handle || !contractId) return null;
+    try {
+      const { message, recipient } = unlockMessage(contractId);
+      const sig = await signUnlock(handle, message, recipient, await unlockNonce(contractId));
+      return await keyPairFromSignature(sig);
+    } catch (e) {
+      toast('err', prettyError(e));
+      return null;
+    }
+  }, [handle, contractId, toast]);
+  const deriveWithPassphrase = useCallback(
+    (passphrase: string) => keyPairFromPassphrase(passphrase, contractId),
+    [contractId],
+  );
 
   // network switch
   useEffect(() => {
@@ -106,6 +128,7 @@ function useBanboState() {
     network, setNetwork, contractInput, setContract, contractId, nodeUrl, explorer,
     sandbox, sandboxDown, handle, writer, state, loadError, toasts, toast, busy, setBusy, now,
     isOwner, refresh, act,
+    keys, setKeys, deriveWithWallet, deriveWithPassphrase,
   };
 }
 

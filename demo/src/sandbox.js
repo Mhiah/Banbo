@@ -5,13 +5,13 @@
 // Serves a small local API on http://localhost:3031 (localhost only):
 //   GET  /config           network + account ids for the dashboard
 //   POST /call             {method, args, gas?, deposit?} signed as the vault owner
-//   POST /scenario/:name   injection | failure | approval | usdc | paid_api | risk | routine
+//   POST /scenario/:name   injection | failure | approval | usdc | paid_api | risk | private | routine
 // It also runs the demo vendor's pay-per-call API on http://localhost:3032.
 // Signing keys never leave this process.
 import http from 'node:http';
 import { setupVault } from './vault.js';
 import { startPaidApi } from './paid-api.js';
-import { actInjection, actFailedTransfer, actApproval, actUsdc, actPaidApi, actRiskRules, actRoutine, bold, cyan, dim } from './acts.js';
+import { actInjection, actFailedTransfer, actApproval, actUsdc, actPaidApi, actRiskRules, actPrivate, actRoutine, DEMO_PASSPHRASE, bold, cyan, dim } from './acts.js';
 import { hasCredentials } from './agent.js';
 
 const PORT = Number(process.env.SANDBOX_API_PORT || 3031);
@@ -41,6 +41,9 @@ const config = {
   usdc: env.usdc?.accountId ?? null,
   paidApi: env.api.url,
   llmAgent: hasCredentials(),
+  // Published on purpose: the sandbox owner has no wallet to sign the unlock
+  // message, so private mode here uses this demo passphrase.
+  demoPassphrase: DEMO_PASSPHRASE,
 };
 
 let busy = false;
@@ -51,6 +54,7 @@ const scenarios = {
   usdc: () => actUsdc(env, { log }),
   paid_api: () => actPaidApi(env, { log }),
   risk: () => actRiskRules(env, { log }),
+  private: () => actPrivate(env, { log }),
   routine: () => actRoutine(env, { log }),
 };
 
@@ -72,6 +76,8 @@ const OWNER_METHODS = new Set([
   'add_agent', 'set_agent_active', 'allow_recipient', 'disallow_recipient', 'set_shared_cap',
   'pause', 'unpause', 'approve', 'decline', 'withdraw', 'deposit',
   'add_token', 'set_agent_token_limits', 'withdraw_token', 'set_risk_rules',
+  'allow_hidden_recipient', 'disallow_hidden_recipient', 'set_privacy',
+  'approve_tee_measurement', 'remove_tee_measurement', 'set_tee_ppids', 'set_tee_policy', 'revoke_attestation',
 ]);
 
 const server = http.createServer(async (req, res) => {

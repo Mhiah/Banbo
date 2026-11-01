@@ -2,6 +2,7 @@ import { useBanbo } from '../state';
 import { activity, STATUS } from '../activity';
 import { near, units, ago, reasonText, short } from '../format';
 import { assetOf } from '../near';
+import { open as openSealed, isSealed } from '../privacy';
 import { Panel, PageHeader, StatusBadge, Addr, Amount, BudgetBar, MiniBar, Empty } from '../ui';
 
 export default function Overview() {
@@ -75,7 +76,7 @@ export default function Overview() {
                 <div className="ap-amount"><Amount yocto={r.amount} asset={assetOf(s, r.token)} strong /></div>
                 <div className="ap-main">
                   <div><span className="mono">{short(r.agent)}</span> wants to pay <Addr id={r.recipient} explorer={b.explorer} /></div>
-                  <div className="muted small">{r.memo ? `“${r.memo}” · ` : ''}requested {ago(r.created_at_ms, b.now)} · above this agent’s approval threshold</div>
+                  <div className="muted small">{r.memo ? (isSealed(r.memo) ? (b.keys && openSealed(r.memo, b.keys.secretKey) ? `“${openSealed(r.memo, b.keys.secretKey)}” · ` : 'Encrypted memo · ') : `“${r.memo}” · `) : ''}requested {ago(r.created_at_ms, b.now)} · above this agent’s approval threshold</div>
                 </div>
                 {b.isOwner ? (
                   <div className="ap-actions">

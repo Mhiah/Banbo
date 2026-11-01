@@ -4,7 +4,7 @@
 
 Banbo is a wallet firewall for AI agents on NEAR. AI agents can pay for things from a shared treasury, but they never hold the treasury's keys. Every payment goes through a NEAR contract that enforces the owner's rules, even when the agent has been prompt-injected.
 
-Built at NEAR HACKATHON (Nov 2026). Tracks: **AI Security & Defense**, Agent Economy.
+Built at NEAR HACKATHON (Nov 2026). Tracks: **AI Security & Defense**, Privacy & Private AI, Agent Economy.
 
 ## The problem
 
@@ -22,6 +22,8 @@ Banbo puts the boundary on-chain:
 | Transfer fails after approval | Reservation released exactly once in the async callback, refund lands back in the vault |
 | Agent retries a request | Request ids are idempotent: a retry never pays twice |
 | Agent goes rogue | Owner can disable that agent or pause the whole vault instantly |
+| Anyone reading your vendor list and memos on-chain | **Private mode**: hidden vendors stored as salted fingerprints, memos sealed to the owner's key |
+| Agent host reading the agent's keys and prompts | **TEE agents**: Intel TDX quote verified by the contract before the agent can spend |
 
 ## Demo
 
@@ -30,7 +32,7 @@ make setup   # npm install + a local NEAR sandbox node (no testnet account neede
 make demo
 ```
 
-The demo starts a real local NEAR node, deploys the contract and runs six acts. Every payment is a real transaction.
+The demo starts a real local NEAR node, deploys the contract and runs seven acts. Every payment is a real transaction.
 
 1. **Prompt injection.** An accounts-payable agent is asked to pay [an invoice](demo/fixtures/invoice.html) that hides instructions to move 9 NEAR to `attacker.test.near`. The attacker gets nothing, and the real 0.2 NEAR invoice still gets paid.
 2. **A transfer fails after approval.** The recipient no longer exists, so the transfer fails a block later. The callback releases the budget exactly once, the refund returns to the vault, and a retry with the same id is a no-op.
@@ -38,6 +40,7 @@ The demo starts a real local NEAR node, deploys the contract and runs six acts. 
 4. **Paying in USDC.** An agent pays the vendor 7.50 USDC through `ft_transfer`. A second payment goes to an allowed account that never registered with the USDC contract. The vault checks registration before sending, so that payment fails safely and its budget comes back.
 5. **Agents paying for what they use.** A weather API charges per call in USDC. The research agent buys three calls, each paid through the vault, and the API serves only after reading the settled payment from the contract. A 15 USDC bulk export is blocked by the agent's limit, and reused or unpaid quotes get nothing.
 6. **Attacks that stay under the limits.** With risk rules on, a lookalike billing account the owner was tricked into allowing can't be paid during its 1-hour cooldown, and an agent told to pay 40 tiny line items is stopped after 5 payments that hour.
+7. **Private mode.** The owner turns on encrypted memos and adds a vendor to the hidden allowlist. An agent pays it with a memo only the owner can read. An injected attempt to reuse the vendor's salt for the attacker is blocked, so is a plaintext memo, and once the owner requires TEE agents, an agent without an attestation can't spend.
 
 With `ANTHROPIC_API_KEY` set, Act 1 is driven by a real Claude agent whose only payment tool is the vault. Without a key (or with `npm run demo:scripted`), a scripted compromised agent makes the same attempts. If the model spots the injection and refuses, the demo replays the attack as a compromised agent anyway, because the vault must not depend on the model resisting.
 
@@ -62,6 +65,10 @@ Everything on screen is read from the contract every 2 seconds. A change shows a
 | Activity | On a phone |
 | --- | --- |
 | ![Activity](docs/screenshots/activity.png) | ![Activity on mobile](docs/screenshots/activity-mobile.png) |
+
+The **Privacy** page turns on encrypted memos, manages hidden vendors, approves the images TEE agents may run and shows each agent's attestation. Memos open only after you unlock it on your device.
+
+![Privacy](docs/screenshots/privacy.png)
 
 ## How it works
 
@@ -107,6 +114,15 @@ Agents can pay in a NEP-141 token such as USDC as well as NEAR. Each token has i
 - **Paying:** `request_payment(..., token: "<token contract>")`. The vault reserves the amount, checks with `storage_balance_of` that the recipient can receive the token, then sends `ft_transfer` (1 yoctoNEAR attached, as NEP-141 requires) and reconciles in the same `on_payout` callback. If the recipient isn't registered, or the transfer fails, the request ends as `Failed` with a `failure_reason`, and the budget and tokens are restored exactly once.
 - **Real USDC:** Circle's native USDC is `17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1` on mainnet and `3e2210e1184b45b64c8a434c0a7e7b23cc04ea7eb7a6c3c32520d03d4afcb8af` on testnet ([Circle's list](https://developers.circle.com/stablecoins/usdc-contract-addresses)). The vault must be registered with it (`storage_deposit`) before it can receive USDC. `WITH_USDC=1 ./scripts/deploy-testnet.sh` does the setup on testnet. The local sandbox uses a test-only token (`contract/mock-ft`) instead.
 
+### Private mode
+
+On a public chain anyone can read a vault's allowlist and memos. Private mode keeps them to the owner, and lets the owner require agents that run in a TEE. Details, trust assumptions and what stays public are in [docs/PRIVACY.md](docs/PRIVACY.md).
+
+- **Hidden vendors.** `allow_hidden_recipient(fingerprint, label?)` stores only `sha256("banbo-recipient-v1:" + account + ":" + salt)` with a random 32-byte salt. The agent passes the salt (`recipient_salt`) when paying; it comes from the agent runtime's config, never from the model. A salt only works for its own vendor.
+- **Encrypted memos.** `set_privacy(owner_encryption_key, encrypted_memos_only)`. Agents seal memos to the owner's X25519 key; the dashboard opens them after the owner unlocks with a wallet signature (no transaction) or a passphrase. With `encrypted_memos_only`, plaintext memos are refused (`memo_not_encrypted`) and not stored.
+- **TEE agents.** An agent in an Intel TDX VM ([`tee-agent/`](tee-agent)) calls `attest_agent` with a TDX quote bound to its implicit account. The contract verifies Intel's signatures and collateral, the TCB status, the RTMR3 event log and the VM's measurements against images the owner approved (`approve_tee_measurement`), in about 189 Tgas. `set_tee_policy(require_tee, ...)` then rejects agents that aren't attested (`agent_not_attested`), whose attestation expired, or whose image is no longer approved.
+- **Confidential Intents** were evaluated for agent payouts and not used: the contract couldn't verify who a confidential payment finally reaches, which would bypass the allowlist. See the feasibility section in [docs/PRIVACY.md](docs/PRIVACY.md).
+
 **Invariant**, per agent and for the shared treasury in the current period: `spent + reserved ≤ limit`, and every request settles at most once. When a new period starts, `spent` resets but in-flight reservations carry over.
 
 A note on concurrency: NEAR executes calls to one contract one at a time, so two requests can't race on the same balance check. The hard part on NEAR is the gap between sending a transfer and learning its result, while other requests keep arriving. That's why the contract reserves before sending and reconciles in a callback.
@@ -127,17 +143,26 @@ A note on concurrency: NEAR executes calls to one contract one at a time, so two
 | `withdraw_token(token, amount)` | owner | can't touch reserved tokens; restored if the transfer fails |
 | `ft_on_transfer(sender_id, amount, msg)` | token contract | NEP-141 deposit; unknown tokens are refunded |
 | `set_risk_rules(recipient_cooldown_ms, max_payments_per_hour)` | owner | 0 turns a rule off |
-| `request_payment(request_id, recipient, amount, memo?, token?)` | agent | the only spend path; `token` omitted means NEAR |
+| `allow_hidden_recipient(fingerprint, label?)` / `disallow_hidden_recipient(fingerprint)` | owner | hidden allowlist; `label` must be encrypted |
+| `set_privacy(owner_encryption_key?, encrypted_memos_only)` | owner | memo encryption |
+| `approve_tee_measurement(measurement)` / `remove_tee_measurement(id)`, `set_tee_ppids(ppids)` | owner | which VM images (and CPUs) TEE agents may run |
+| `set_tee_policy(require_tee, attestation_ttl_ms, allow_sw_hardening_needed)`, `revoke_attestation(agent)` | owner | TEE gate |
+| `attest_agent(attestation)` | agent | TDX quote verified on-chain; needs ~300 Tgas attached |
+| `request_payment(request_id, recipient, amount, memo?, token?, recipient_salt?)` | agent | the only spend path; `token` omitted means NEAR; `recipient_salt` for hidden vendors |
 | `on_payout(key)`, `on_recipient_checked(key)`, `on_token_withdraw(...)` | contract only | `#[private]` callbacks |
-| `get_config`, `get_agent`, `list_agents`, `list_allowlist`, `get_request`, `list_requests`, `list_blocked`, `blocked_count`, `get_balances`, `list_tokens`, `get_agent_token_limits`, `list_recipients`, `get_agent_rate` | view | |
+| `get_config`, `get_agent`, `list_agents`, `list_allowlist`, `get_request`, `list_requests`, `list_blocked`, `blocked_count`, `get_balances`, `list_tokens`, `get_agent_token_limits`, `list_recipients`, `get_agent_rate`, `list_hidden_recipients`, `get_tee_policy`, `get_agent_tee`, `list_agent_tee` | view | |
 
 NEAR amounts are yoctoNEAR strings; token amounts are in the token's smallest unit (USDC has 6 decimals). Events are emitted as NEP-297 logs (`EVENT_JSON:{"standard":"banbo",...}`).
 
 ## Tests
 
 ```bash
-make test-contract   # 40 Rust unit tests (policy, invariants, callbacks, periods, tokens, risk rules)
-make test-sandbox    # 21 integration tests on a local NEAR node: payments, USDC, the paid API, risk rules
+make test-contract   # 80 Rust unit tests (policy, invariants, callbacks, tokens, risk rules, private mode,
+                     #   TEE checks incl. a genuine Intel TDX quote)
+make test-sandbox    # 25 integration tests on a local NEAR node: payments, USDC, the paid API, risk rules,
+                     #   private mode, the TEE agent runtime against the contract
+make test-dashboard  # dashboard unit tests (formatting, private-mode crypto)
+make test-tee-agent  # TEE agent unit tests
 ```
 
 The sandbox tests cover what unit tests can't: a real failed transfer and refund, `#[private]` enforcement, and an agent that holds only a function-call key failing to transfer NEAR or call admin methods.
@@ -147,22 +172,29 @@ The sandbox tests cover what unit tests can't: a real failed transfer and refund
 ```
 contract/            Rust contract (near-sdk 5)
   src/lib.rs         vault logic
-  src/tests.rs       unit tests
+  src/tee.rs         on-chain Intel TDX attestation checks
+  src/tests*.rs      unit tests
+  test-data/         genuine Intel TDX sample quote + collateral for tests
   build.sh           wasm build without cargo-near
   mock-ft/           test-only NEP-141 token used as USDC on the sandbox
   res/               prebuilt banbo.wasm and mock_ft.wasm (so the demo runs without Rust)
 demo/
   src/vault.js       sandbox setup helpers
   src/agent.js       Claude agent + scripted compromised agent
-  src/demo.js        the 6-act demo
+  src/demo.js        the 7-act demo
+  src/privacy.js     memo sealing and hidden-vendor fingerprints
   src/sandbox.js     long-running sandbox + local API for the dashboard
   src/paid-api.js    pay-per-call API that verifies vault payments on-chain, and its client
   test/              sandbox integration tests
+  scripts/tee-gas.mjs  measures the gas of on-chain quote verification
   fixtures/          the poisoned invoice
 dashboard/           owner dashboard (Vite + React)
+tee-agent/           agent for an Intel TDX VM (dstack): attests to the vault, NEAR AI private inference
 scripts/
   deploy-testnet.sh  deploy + give an agent a restricted key on testnet
+  confidential-intents-check.mjs  dry confidential quote from NEAR Intents' 1Click API
 docs/THREAT_MODEL.md
+docs/PRIVACY.md      private mode: what's hidden, what stays public, trust assumptions
 ```
 
 ## Building the contract
@@ -189,7 +221,8 @@ OWNER=you.testnet VAULT=vault.you.testnet AGENT=agent.you.testnet VENDOR=vendor.
 
 ## Limitations
 
-- Native NEAR only for now. NEP-141 stablecoins are next.
+- Private mode hides the vendor list and memos, not payments: amounts and recipients of payments that are made are public. See [docs/PRIVACY.md](docs/PRIVACY.md).
+- TEE agents trust Intel TDX and dstack's key service for privacy (never for the spending limits). The full attestation flow has been tested on-chain with a genuine Intel quote, but not yet with an agent deployed in a live TDX VM.
 - The allowlist is the main defense against new recipients. It doesn't judge whether a payment to an allowlisted vendor is sensible beyond the limits.
 - If the callback itself ran out of gas, a request would stay `InFlight`. The callback has a fixed 10 Tgas budget and does very little, but there is no manual recovery method yet.
 - Testnet only, unaudited. Don't put real funds in it.

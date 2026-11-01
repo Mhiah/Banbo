@@ -39,7 +39,7 @@ export default function Agents() {
                   const used = (BigInt(a.spent) + BigInt(a.reserved)).toString();
                   return (
                     <tr key={id} tabIndex={0} onClick={() => setSelected(id)} onKeyDown={(e) => e.key === 'Enter' && setSelected(id)} aria-label={`Open ${id}`}>
-                      <td><span className="mono">{short(id)}</span></td>
+                      <td><span className="mono">{short(id)}</span><TeeBadge id={id} /></td>
                       <td className="r num" data-label="Per payment">{near(a.per_tx_max)}</td>
                       <td className="r num" data-label="Daily limit">{near(a.period_limit)}</td>
                       <td className="r nowrap" data-label="Used today"><span className="num">{near(used)}</span> <MiniBar value={used} max={a.period_limit} /></td>
@@ -74,6 +74,7 @@ function AgentDetail({ id, agent }: { id: string; agent: Agent }) {
     <>
       <div className="detail-status">
         {agent.active ? <span className="badge green"><span className="dot" />Active</span> : <span className="badge gray"><span className="dot" />Disabled</span>}
+        <TeeBadge id={id} />
         <Addr id={id} explorer={b.explorer} full />
       </div>
       <dl className="kv">
@@ -218,4 +219,16 @@ function RegisterAgent({ open, onClose }: { open: boolean; onClose: () => void }
       )}
     </Dialog>
   );
+}
+
+/** Shown for agents with a TEE attestation, or when the vault requires one. */
+function TeeBadge({ id }: { id: string }) {
+  const b = useBanbo();
+  const s = b.state!;
+  const info = s.agentTee[id];
+  if (!info) return s.tee.require_tee ? <span className="badge amber inline" title="The vault requires TEE agents; this one can’t spend until it attests."><span className="dot" />Not attested</span> : null;
+  const valid = info.valid_until_ms > b.now && s.tee.measurements.some(([m]) => m === info.measurement_id);
+  return valid
+    ? <span className="badge green inline" title={`Intel TDX attestation verified by the contract. App ${info.compose_hash.slice(0, 16)}…, valid until ${new Date(info.valid_until_ms).toLocaleString()}`}><span className="dot" />TEE</span>
+    : <span className="badge amber inline" title="The attestation expired or its image is no longer approved."><span className="dot" />TEE lapsed</span>;
 }
