@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pkg from 'near-workspaces';
 import { createRequire } from 'node:module';
+import { seal } from './privacy.js';
 const { Worker } = pkg;
 const { Logger } = createRequire(import.meta.url)('@near-js/utils');
 
@@ -102,12 +103,19 @@ async function setupUsdc({ root, owner, vault, vendor, agents }) {
   return usdc;
 }
 
-/** Call request_payment and return { outcome, hash, logs }. */
-/** Pass amountNear for NEAR, token + amountUsdc for the test USDC, or amountUnits (smallest units). */
-export async function requestPayment(agent, vault, { requestId, recipient, amountNear, amountUsdc, amountUnits, token, memo }) {
+/**
+ * Call request_payment and return { outcome, hash, logs }. Pass amountNear
+ * for NEAR, token + amountUsdc for the test USDC, or amountUnits (smallest
+ * units). `recipientSalt` is only for hidden-allowlist
+ * recipients. With `sealTo` (the owner's x25519 key) the memo is encrypted
+ * before it leaves the agent, so only the owner can read it.
+ */
+export async function requestPayment(agent, vault, { requestId, recipient, amountNear, amountUsdc, amountUnits, token, memo, recipientSalt, sealTo }) {
   const amount = amountUnits ?? (token ? U(amountUsdc) : N(amountNear));
+  const sealedMemo = memo && sealTo ? seal(memo, sealTo) : memo;
   const res = await agent.callRaw(vault, 'request_payment', {
-    request_id: requestId, recipient, amount, memo, token: token ?? null,
+    request_id: requestId, recipient, amount, memo: sealedMemo, token: token ?? null,
+    recipient_salt: recipientSalt ?? null,
   }, { gas: TGAS(150) });
   return {
     outcome: res.parseResult(),

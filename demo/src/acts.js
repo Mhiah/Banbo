@@ -3,6 +3,14 @@
 import { requestPayment, events, fmt, fmtU, N } from './vault.js';
 import { runLlmAgent, runBuyerAgent, hasCredentials, COMPROMISED_SCRIPT, BUYER_SCRIPT, MODEL, INVOICE_URL } from './agent.js';
 import { paidFetch } from './paid-api.js';
+import { keyPairFromPassphrase, hiddenEntry, open as openSealed } from './privacy.js';
+
+/**
+ * Demo only: the sandbox has no wallet to sign the unlock message, so the
+ * owner key comes from this published passphrase. Real vaults derive it
+ * from the owner's wallet signature (or a private passphrase).
+ */
+export const DEMO_PASSPHRASE = 'banbo sandbox demo';
 
 const tty = process.stdout.isTTY;
 const c = (code) => (s) => (tty ? `\x1b[${code}m${s}\x1b[0m` : s);
@@ -277,6 +285,70 @@ export async function actRiskRules(env, { log = console.log } = {}) {
   } finally {
     await owner.call(vault, 'set_risk_rules', { recipient_cooldown_ms: before.recipient_cooldown_ms, max_payments_per_hour: before.max_payments_per_hour });
     log(dim('\n  (risk rules set back to how they were, so the other acts can be re-run)'));
+  }
+  log('');
+  return act;
+}
+
+/**
+ * Act 7: private mode. Vendors on a hidden allowlist, memos only the owner
+ * can read, and a vault that only pays out for agents running in a TEE.
+ */
+export async function actPrivate(env, { log = console.log } = {}) {
+  const { root, owner, vault, attacker, agents } = env;
+  const research = agents[0];
+  const run = ++runId;
+  log(bold('Act 7: private mode'));
+  log('  On a public chain anyone can read a vault\'s allowlist and every memo. Private mode');
+  log('  keeps the vendor list and the memos to the owner. Payments themselves stay public.\n');
+  const act = { name: 'private', payments: [] };
+  const before = await vault.view('get_config', {});
+  const keys = keyPairFromPassphrase(DEMO_PASSPHRASE, vault.accountId);
+  await owner.call(vault, 'set_privacy', { owner_encryption_key: keys.publicKey, encrypted_memos_only: true });
+  log(`    owner turns on encrypted memos, key ${keys.publicKey.slice(0, 22)}… ${dim('(demo key from a published passphrase)')}`);
+  try {
+    const quiet = await root.createSubAccount(`quiet-vendor-r${run}`, { initialBalance: N(1) });
+    const entry = hiddenEntry(quiet.accountId, keys.publicKey, 'Private data supplier');
+    await owner.call(vault, 'allow_hidden_recipient', { fingerprint: entry.fingerprint, label: entry.label });
+    const listed = await vault.view('list_hidden_recipients', {});
+    log(`    owner adds a hidden vendor. What anyone can read on-chain:`);
+    log(dim(`      fingerprint ${listed.at(-1).fingerprint.slice(0, 24)}…   label ${listed.at(-1).label.slice(0, 28)}…`));
+    log(`    research-agent holds the vendor's salt in its runtime config, never in the model's context\n`);
+
+    const memo = 'Private dataset, November batch';
+    const id1 = `private-r${run}-a`;
+    const r1 = await requestPayment(research, vault, { requestId: id1, recipient: quiet.accountId, amountNear: 0.1, memo, recipientSalt: entry.salt, sealTo: keys.publicKey });
+    show(log, `0.1 NEAR → hidden vendor, memo sealed to the owner`, r1);
+    const req = await vault.view('get_request', { key: r1.outcome.key });
+    log(dim(`      memo on-chain: ${req.memo.slice(0, 40)}…`));
+    log(`      owner's dashboard opens it: "${openSealed(req.memo, keys.secretKey)}"`);
+    act.payments.push({ requestId: id1, recipient: quiet.accountId, amountNear: 0.1, memo, hidden: true, outcome: r1.outcome, tx: r1.hash });
+
+    const id2 = `private-r${run}-b`;
+    const r2 = await requestPayment(research, vault, { requestId: id2, recipient: attacker.accountId, amountNear: 0.1, memo: 'same vendor, new account', recipientSalt: entry.salt, sealTo: keys.publicKey });
+    show(log, `injected: reuse that salt to pay ${attacker.accountId}`, r2);
+    log(dim('      the fingerprint covers the account name, so a salt only works for its own vendor'));
+    act.payments.push({ requestId: id2, recipient: attacker.accountId, amountNear: 0.1, memo: 'same vendor, new account', outcome: r2.outcome, tx: r2.hash });
+
+    const id3 = `private-r${run}-c`;
+    const r3 = await requestPayment(research, vault, { requestId: id3, recipient: quiet.accountId, amountNear: 0.01, memo: 'Invoice 2291 for Acme Corp', recipientSalt: entry.salt });
+    show(log, `an agent that wasn't set up to seal memos sends one in plaintext`, r3);
+    log(dim('      refused, and the memo is not copied into the vault\'s records or logs'));
+    log(dim('      (its own transaction is still public, which is why sealing lives in the agent runtime)'));
+    act.payments.push({ requestId: id3, recipient: quiet.accountId, amountNear: 0.01, memo: '(plaintext, refused)', outcome: r3.outcome, tx: r3.hash });
+
+    await owner.call(vault, 'set_tee_policy', { require_tee: true, attestation_ttl_ms: 7 * 86_400_000, allow_sw_hardening_needed: false });
+    log(`\n    owner requires TEE agents: only agents that proved, with an Intel TDX quote checked`);
+    log(`    by the contract, that they run the approved image inside a TEE`);
+    const id4 = `private-r${run}-d`;
+    const r4 = await requestPayment(research, vault, { requestId: id4, recipient: quiet.accountId, amountNear: 0.05, memo: 'API credits', recipientSalt: entry.salt, sealTo: keys.publicKey });
+    show(log, `research-agent (runs on a laptop, no attestation): 0.05 NEAR`, r4);
+    log(dim('      the testnet run shows an agent in a real TEE attesting and getting paid'));
+    act.payments.push({ requestId: id4, recipient: quiet.accountId, amountNear: 0.05, memo: 'API credits', outcome: r4.outcome, tx: r4.hash });
+  } finally {
+    await owner.call(vault, 'set_tee_policy', { require_tee: false, attestation_ttl_ms: 7 * 86_400_000, allow_sw_hardening_needed: false });
+    await owner.call(vault, 'set_privacy', { owner_encryption_key: keys.publicKey, encrypted_memos_only: before.encrypted_memos_only });
+    log(dim('\n  (TEE requirement and memo rule set back so the other acts can be re-run; the key stays so the dashboard can read the memos)'));
   }
   log('');
   return act;

@@ -39,6 +39,11 @@ const SCENARIOS = [
     expect: 'The lookalike can’t be paid during its cooldown. The tiny payments stop after 5. The rules are then set back to how they were.',
   },
   {
+    id: 'private', title: 'Private mode', tone: '',
+    body: 'The owner turns on encrypted memos and adds a vendor to the hidden allowlist. An agent pays it with a sealed memo, then is tricked into reusing the vendor’s salt for the attacker. Finally the owner requires TEE agents.',
+    expect: 'The hidden vendor is paid and only the owner can read the memo (unlock on the Privacy page with the demo passphrase). The reused salt, a plaintext memo and the non-TEE agent are all blocked.',
+  },
+  {
     id: 'routine', title: 'Routine agent payments', tone: '',
     body: 'Two agents pay the allowed API vendor small amounts in NEAR and USDC, as they would day to day.',
     expect: 'Payments settle and count against each agent’s daily limit.',

@@ -35,6 +35,8 @@ export interface PaymentRequest {
   /** NEP-141 token contract, or null for NEAR. */
   token: string | null;
   memo: string;
+  /** Set when paid to a hidden-allowlist recipient. */
+  recipient_fingerprint: string | null;
   status: Status;
   failure_reason: string | null;
   period_index: number;
@@ -96,6 +98,38 @@ export interface Config {
   current_period: number;
   recipient_cooldown_ms: number;
   max_payments_per_hour: number;
+  owner_encryption_key: string | null;
+  encrypted_memos_only: boolean;
+  require_tee: boolean;
+}
+export interface HiddenRecipient {
+  fingerprint: string;
+  added_at_ms: number;
+  payable_from_ms: number;
+  label: string | null;
+}
+export interface TeeMeasurement {
+  mrtd: string;
+  rtmr0: string;
+  rtmr1: string;
+  rtmr2: string;
+  compose_hash: string;
+  key_provider_digest: string | null;
+}
+export interface TeePolicy {
+  require_tee: boolean;
+  attestation_ttl_ms: number;
+  allow_sw_hardening_needed: boolean;
+  measurements: [string, TeeMeasurement][];
+  ppids: string[];
+}
+export interface TeeInfo {
+  measurement_id: string;
+  compose_hash: string;
+  ppid: string;
+  tcb_status: string;
+  attested_at_ms: number;
+  valid_until_ms: number;
 }
 export interface Recipient {
   account: string;
@@ -120,6 +154,10 @@ export interface VaultState {
   recipients: Recipient[];
   /** agent → payments in the current one-hour window */
   rates: Record<string, RateWindow>;
+  hidden: HiddenRecipient[];
+  tee: TeePolicy;
+  /** agent → its accepted attestation */
+  agentTee: Record<string, TeeInfo>;
 }
 
 export function assetOf(state: Pick<VaultState, 'tokens'>, token: string | null | undefined): Asset {
@@ -158,7 +196,7 @@ export async function view<T>(nodeUrl: string, contractId: string, method: strin
 
 export async function loadVault(nodeUrl: string, contractId: string): Promise<VaultState> {
   const v = <T,>(m: string, a: object = {}) => view<T>(nodeUrl, contractId, m, a);
-  const [config, balances, agents, allowlist, requests, blocked, blockedCount, tokens, recipients] = await Promise.all([
+  const [config, balances, agents, allowlist, requests, blocked, blockedCount, tokens, recipients, hidden, tee, teeList] = await Promise.all([
     v<Config>('get_config'),
     v<Balances>('get_balances'),
     v<[string, Agent][]>('list_agents'),
@@ -168,7 +206,11 @@ export async function loadVault(nodeUrl: string, contractId: string): Promise<Va
     v<number>('blocked_count'),
     v<TokenView[]>('list_tokens'),
     v<Recipient[]>('list_recipients'),
+    v<HiddenRecipient[]>('list_hidden_recipients'),
+    v<TeePolicy>('get_tee_policy'),
+    v<[string, TeeInfo][]>('list_agent_tee'),
   ]);
+  const agentTee: Record<string, TeeInfo> = Object.fromEntries(teeList);
   const rateList = await Promise.all(agents.map(([id]) => v<RateWindow>('get_agent_rate', { agent: id })));
   const rates: Record<string, RateWindow> = {};
   agents.forEach(([id], i) => (rates[id] = rateList[i]));
@@ -177,7 +219,7 @@ export async function loadVault(nodeUrl: string, contractId: string): Promise<Va
     const lists = await Promise.all(agents.map(([id]) => v<[string, Limits][]>('get_agent_token_limits', { agent: id })));
     agents.forEach(([id], i) => (tokenLimits[id] = lists[i]));
   }
-  return { config, balances, agents, allowlist, requests, blocked, blockedCount, tokens, tokenLimits, recipients, rates };
+  return { config, balances, agents, allowlist, requests, blocked, blockedCount, tokens, tokenLimits, recipients, rates, hidden, tee, agentTee };
 }
 
 // ------------------------------------------------------------------ writes
@@ -197,6 +239,8 @@ export interface SandboxConfig {
   attacker: string;
   usdc: string | null;
   llmAgent: boolean;
+  /** Published demo passphrase for private mode on the sandbox. */
+  demoPassphrase?: string;
 }
 
 export async function sandboxConfig(): Promise<SandboxConfig> {
@@ -265,6 +309,19 @@ export function wallet(network: 'testnet' | 'mainnet', contractId: string): Prom
     })());
   }
   return walletCache.get(k)!;
+}
+
+/**
+ * Ask the wallet to sign the private-mode unlock message (NEP-413). Returns
+ * the signature bytes, or throws if this wallet can't sign messages here.
+ */
+export async function signUnlock(h: WalletHandle, message: string, recipient: string, nonce: Uint8Array): Promise<Uint8Array> {
+  const w = await h.selector.wallet();
+  if (!('signMessage' in w) || typeof w.signMessage !== 'function') throw new Error('This wallet can’t sign messages. Use a passphrase instead.');
+  const { Buffer } = await import('buffer');
+  const out = await w.signMessage({ message, recipient, nonce: Buffer.from(nonce) });
+  if (!out?.signature) throw new Error('The wallet didn’t return a signature. Wallets that redirect can’t unlock here; use a passphrase instead.');
+  return Uint8Array.from(atob(out.signature), (c) => c.charCodeAt(0));
 }
 
 export function walletWriter(h: WalletHandle, contractId: string): Writer {

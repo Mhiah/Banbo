@@ -1,0 +1,21 @@
+# dstack app compose for the Banbo TEE agent (Phala Cloud or any dstack host).
+# Replace the image with your published build, pinned by digest
+# (ghcr.io/<you>/banbo-tee-agent@sha256:...), so the compose hash, and so the
+# measurement the vault approves, names exactly that code.
+services:
+  agent:
+    image: ghcr.io/mhiah/banbo-tee-agent@sha256:REPLACE_WITH_DIGEST
+    restart: always
+    ports:
+      - "8080:8080"
+    volumes:
+      # The dstack guest agent: keys from the KMS and TDX quotes.
+      - /var/run/dstack.sock:/var/run/dstack.sock
+    environment:
+      # Set these as encrypted secrets in the deployment; only the TEE can read them.
+      - NEAR_NETWORK=${NEAR_NETWORK}
+      - VAULT_ID=${VAULT_ID}
+      - NEAR_AI_API_KEY=${NEAR_AI_API_KEY}
+      - NEAR_AI_MODEL=${NEAR_AI_MODEL}
+      - AGENT_TASK_TOKEN=${AGENT_TASK_TOKEN}
+      - HIDDEN_VENDORS=${HIDDEN_VENDORS}
