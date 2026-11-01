@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { STATUS, type Kind } from './activity';
-import { near, pct, short } from './format';
+import { near, units, pct, short } from './format';
+import { NEAR_ASSET, type Asset } from './near';
 
 export function Panel({ title, action, children, flush, id }: { title?: ReactNode; action?: ReactNode; children: ReactNode; flush?: boolean; id?: string }) {
   return (
@@ -46,26 +47,29 @@ export function Addr({ id, explorer, full }: { id: string; explorer?: string; fu
     : <span className="mono" title={id}>{text}</span>;
 }
 
-export function Amount({ yocto, unit = 'NEAR', strong }: { yocto: string; unit?: string; strong?: boolean }) {
-  return <span className={`num ${strong ? 'strong' : ''}`}>{near(yocto)}<span className="unit"> {unit}</span></span>;
+/** An amount with its unit. Pass `asset` for tokens; NEAR otherwise. */
+export function Amount({ yocto, unit, asset, strong }: { yocto: string; unit?: string; asset?: Asset; strong?: boolean }) {
+  const a = asset ?? NEAR_ASSET;
+  return <span className={`num ${strong ? 'strong' : ''}`}>{units(yocto, a.decimals)}<span className="unit"> {unit ?? a.symbol}</span></span>;
 }
 
 /** Spent / reserved / available on one bar, with a legend (not color alone). */
-export function BudgetBar({ spent, reserved, cap }: { spent: string; reserved: string; cap: string }) {
+export function BudgetBar({ spent, reserved, cap, asset = NEAR_ASSET }: { spent: string; reserved: string; cap: string; asset?: Asset }) {
+  const f = (v: string) => units(v, asset.decimals);
   const s = pct(spent, cap);
   const r = Math.min(100 - s, pct(reserved, cap));
   const left = (BigInt(cap) - BigInt(spent) - BigInt(reserved));
   const available = left > 0n ? left.toString() : '0';
   return (
     <div className="budget">
-      <div className="budget-bar" role="img" aria-label={`Spent ${near(spent)}, reserved ${near(reserved)}, available ${near(available)} of ${near(cap)} NEAR`}>
+      <div className="budget-bar" role="img" aria-label={`Spent ${f(spent)}, reserved ${f(reserved)}, available ${f(available)} of ${f(cap)} ${asset.symbol}`}>
         <span className="seg spent" style={{ width: `${s}%` }} />
         <span className="seg reserved" style={{ width: `${r}%` }} />
       </div>
       <dl className="budget-legend">
-        <div><dt><i className="sw spent" />Spent</dt><dd><Amount yocto={spent} /></dd></div>
-        <div><dt><i className="sw reserved" />Reserved</dt><dd><Amount yocto={reserved} /></dd></div>
-        <div><dt><i className="sw available" />Available</dt><dd><Amount yocto={available} /></dd></div>
+        <div><dt><i className="sw spent" />Spent</dt><dd><Amount yocto={spent} asset={asset} /></dd></div>
+        <div><dt><i className="sw reserved" />Reserved</dt><dd><Amount yocto={reserved} asset={asset} /></dd></div>
+        <div><dt><i className="sw available" />Available</dt><dd><Amount yocto={available} asset={asset} /></dd></div>
       </dl>
     </div>
   );

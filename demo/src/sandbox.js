@@ -5,11 +5,11 @@
 // Serves a small local API on http://localhost:3031 (localhost only):
 //   GET  /config           network + account ids for the dashboard
 //   POST /call             {method, args, gas?, deposit?} signed as the vault owner
-//   POST /scenario/:name   injection | failure | approval | routine
+//   POST /scenario/:name   injection | failure | approval | usdc | routine
 // Signing keys never leave this process.
 import http from 'node:http';
 import { setupVault } from './vault.js';
-import { actInjection, actFailedTransfer, actApproval, actRoutine, bold, cyan, dim } from './acts.js';
+import { actInjection, actFailedTransfer, actApproval, actUsdc, actRoutine, bold, cyan, dim } from './acts.js';
 import { hasCredentials } from './agent.js';
 
 const PORT = Number(process.env.SANDBOX_API_PORT || 3031);
@@ -32,6 +32,7 @@ const config = {
   agents: agents.map((a) => a.accountId),
   vendor: vendor.accountId,
   attacker: attacker.accountId,
+  usdc: env.usdc?.accountId ?? null,
   llmAgent: hasCredentials(),
 };
 
@@ -40,6 +41,7 @@ const scenarios = {
   injection: () => actInjection(env, { log }),
   failure: () => actFailedTransfer(env, { log }),
   approval: () => actApproval(env, { log, approve: false }),
+  usdc: () => actUsdc(env, { log }),
   routine: () => actRoutine(env, { log }),
 };
 
@@ -60,6 +62,7 @@ const readBody = (req) => new Promise((ok) => {
 const OWNER_METHODS = new Set([
   'add_agent', 'set_agent_active', 'allow_recipient', 'disallow_recipient', 'set_shared_cap',
   'pause', 'unpause', 'approve', 'decline', 'withdraw', 'deposit',
+  'add_token', 'set_agent_token_limits', 'withdraw_token',
 ]);
 
 const server = http.createServer(async (req, res) => {
@@ -69,7 +72,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && req.url === '/call') {
       const { method, args = {}, deposit } = await readBody(req);
       if (!OWNER_METHODS.has(method)) return send(res, 400, { error: `method not allowed: ${method}` });
-      const r = await owner.callRaw(vault, method, args, { gas: '100000000000000', attachedDeposit: deposit ?? '0' });
+      const r = await owner.callRaw(vault, method, args, { gas: '150000000000000', attachedDeposit: deposit ?? '0' });
       const failure = r.failures?.[0];
       return send(res, failure ? 400 : 200, {
         hash: r.result.transaction.hash,

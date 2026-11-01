@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { useBanbo } from '../state';
 import { runScenario, prettyError } from '../near';
-import { near, reasonText, short } from '../format';
+import { near, units, reasonText, short } from '../format';
 import { Panel, PageHeader, Empty } from '../ui';
 
 type Outcome = { outcome: string; reason?: string; key?: string; status?: string };
-type Run = { name: string; at: number; payments: { recipient?: string; amountNear?: number; memo?: string; requestId?: string; outcome: Outcome; tx: string; approveTx?: string }[] };
+type Run = { name: string; at: number; payments: { recipient?: string; amountNear?: number; amountUsdc?: number; memo?: string; requestId?: string; outcome: Outcome; finalStatus?: string; failureReason?: string; tx: string; approveTx?: string }[] };
 
 const SCENARIOS = [
   {
@@ -24,8 +24,13 @@ const SCENARIOS = [
     expect: 'The payment waits on the Overview page until you approve or decline it.',
   },
   {
+    id: 'usdc', title: 'Paying in USDC', tone: '',
+    body: 'The research agent pays the API vendor 7.50 USDC. Then it pays 3 USDC to a newly allowed account that never registered with the USDC contract.',
+    expect: 'The first payment settles. The second fails safely before any tokens move, and its budget is released.',
+  },
+  {
     id: 'routine', title: 'Routine agent payments', tone: '',
-    body: 'Two agents pay the allowed API vendor small amounts, as they would day to day.',
+    body: 'Two agents pay the allowed API vendor small amounts in NEAR and USDC, as they would day to day.',
     expect: 'Payments settle and count against each agent’s daily limit.',
   },
 ];
@@ -75,6 +80,11 @@ export default function Demo() {
     ['Shared', BigInt(bal.shared_spent), BigInt(bal.shared_reserved), bal.shared_cap],
     ...s.agents.map(([id, a]) => [short(id), BigInt(a.spent), BigInt(a.reserved), a.period_limit] as [string, bigint, bigint, string]),
   ];
+  const tokenChecks: [string, string, bigint, bigint, string, number][] = s.tokens.flatMap((t) => [
+    [`${t.symbol} shared`, t.token, BigInt(t.shared_spent), BigInt(t.shared_reserved), t.shared_cap, t.decimals] as [string, string, bigint, bigint, string, number],
+    ...s.agents.flatMap(([id]) => (s.tokenLimits[id] ?? []).filter(([tok]) => tok === t.token).map(([, l]) =>
+      [`${short(id)} · ${t.symbol}`, t.token, BigInt(l.spent), BigInt(l.reserved), l.period_limit, t.decimals] as [string, string, bigint, bigint, string, number])),
+  ]);
 
   return (
     <>
@@ -114,6 +124,18 @@ export default function Demo() {
                   </tr>
                 );
               })}
+              {tokenChecks.map(([label, , sp, rs, cap, dec]) => {
+                const ok = sp + rs <= BigInt(cap);
+                return (
+                  <tr key={label}>
+                    <td className="mono">{label}</td>
+                    <td className="r num" data-label="Spent">{units(sp, dec)}</td>
+                    <td className="r num" data-label="Reserved">{units(rs, dec)}</td>
+                    <td className="r num" data-label="Limit">{units(cap, dec)}</td>
+                    <td className="st" data-label="Holds">{ok ? <span className="badge green"><span className="dot" />Yes</span> : <span className="badge red"><span className="dot" />No</span>}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table></div>
           <p className="footnote pad">Read live from the contract. Shared: {near(sharedUsed)} of {near(bal.shared_cap)} NEAR used.</p>
@@ -131,9 +153,11 @@ export default function Demo() {
                         <span className={`res ${p.outcome.outcome}`}>{LABEL[p.outcome.outcome] ?? p.outcome.outcome}</span>
                         <span className="res-main">
                           {p.amountNear !== undefined && <span className="num">{p.amountNear} NEAR → </span>}
+                          {p.amountUsdc !== undefined && <span className="num">{p.amountUsdc.toFixed(2)} USDC → </span>}
                           {p.recipient && <span className="mono">{short(p.recipient)}</span>}
                           {p.outcome.reason && <span className="reason"> · {reasonText(p.outcome.reason)}</span>}
                           {p.outcome.status && <span className="muted"> · already {p.outcome.status}</span>}
+                          {p.finalStatus === 'Failed' && <span className="reason"> · then failed: {reasonText(p.failureReason ?? 'transfer_failed')}</span>}
                         </span>
                         <span className="mono xs muted tx" title={p.tx}>tx {p.tx.slice(0, 10)}…</span>
                       </li>

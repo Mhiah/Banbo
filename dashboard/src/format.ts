@@ -1,25 +1,38 @@
 export const YOCTO = 10n ** 24n;
 
-/** yoctoNEAR string → "1.234" (rounded down, up to `digits` decimals, trailing zeros trimmed). */
-export function near(yocto: string | bigint, digits = 3): string {
-  const v = BigInt(yocto);
+/**
+ * Smallest-unit string → display amount, rounded down. NEAR shows up to 3
+ * decimals with trailing zeros trimmed ("1.5"); tokens such as USDC show
+ * cents ("1.50").
+ */
+export function units(raw: string | bigint, decimals: number, digits = decimals === 24 ? 3 : Math.min(decimals, 2)): string {
+  const fixed = decimals !== 24;
+  const v = BigInt(raw);
+  const one = 10n ** BigInt(decimals);
   const neg = v < 0n;
   const a = neg ? -v : v;
-  const whole = a / YOCTO;
+  const whole = a / one;
   const scale = 10n ** BigInt(digits);
-  const frac = ((a % YOCTO) * scale) / YOCTO;
-  let f = frac.toString().padStart(digits, '0').replace(/0+$/, '');
+  const frac = ((a % one) * scale) / one;
+  const padded = frac.toString().padStart(digits, '0');
+  const f = fixed ? (digits ? padded : '') : padded.replace(/0+$/, '');
   const s = `${whole.toLocaleString('en-US')}${f ? `.${f}` : ''}`;
   return neg ? `-${s}` : s;
 }
 
-/** "1.5" NEAR → yoctoNEAR string. Throws on malformed input. */
-export function toYocto(input: string): string {
+/** yoctoNEAR string → "1.234". */
+export const near = (yocto: string | bigint, digits = 3) => units(yocto, 24, digits);
+
+/** "1.5" → smallest units for a token with `decimals`. Throws on malformed input. */
+export function toUnits(input: string, decimals: number): string {
   const s = input.trim();
-  if (!/^\d+(\.\d{1,24})?$/.test(s)) throw new Error('Enter an amount like 0.5');
-  const [w, f = ''] = s.split('.');
-  return (BigInt(w) * YOCTO + BigInt(f.padEnd(24, '0'))).toString();
+  const m = s.match(/^(\d+)(?:\.(\d+))?$/);
+  if (!m || (m[2] ?? '').length > decimals) throw new Error(decimals ? `Enter an amount like 0.5 (up to ${decimals} decimals)` : 'Enter a whole number');
+  return (BigInt(m[1]) * 10n ** BigInt(decimals) + BigInt((m[2] ?? '').padEnd(decimals, '0') || '0')).toString();
 }
+
+/** "1.5" NEAR → yoctoNEAR string. */
+export const toYocto = (input: string) => toUnits(input, 24);
 
 export function pct(part: string | bigint, whole: string | bigint): number {
   const w = BigInt(whole);
@@ -49,6 +62,10 @@ const REASONS: Record<string, string> = {
   unknown_agent: 'Not a registered agent',
   recipient_not_allowed: 'Agent tried to pay itself or the vault',
   zero_amount: 'Zero amount',
+  token_not_supported: 'Token not accepted by this vault',
+  token_not_enabled_for_agent: 'Agent has no limits for this token',
+  recipient_not_registered: 'Recipient can’t receive this token yet',
+  transfer_failed: 'Transfer failed',
 };
 export const reasonText = (r: string) => REASONS[r] ?? r.replace(/_/g, ' ');
 

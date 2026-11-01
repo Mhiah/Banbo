@@ -5,7 +5,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import pkg from 'near-workspaces';
 import { transactions } from 'near-api-js';
-import { setupVault, requestPayment, events, N, fmt } from '../src/vault.js';
+import { setupVault, requestPayment, events, N, U, fmt } from '../src/vault.js';
 
 const { createKeyPair } = pkg;
 let env;
@@ -159,4 +159,92 @@ test('pause stops everything', async () => {
     requestId: 'p-1', recipient: vendor.accountId, amountNear: 0.1, memo: '',
   });
   assert.deepEqual(r.outcome, { outcome: 'rejected', reason: 'vault_paused' });
+  await owner.call(vault, 'unpause', {});
+});
+
+// ----------------------------------------------------------------- USDC (NEP-141)
+
+const ftBalance = async (token, acc) => BigInt(await token.view('ft_balance_of', { account_id: acc.accountId }));
+const usdcView = async (vault, token) => (await vault.view('list_tokens', {})).find((t) => t.token === token.accountId);
+
+test('USDC: an allowed payment settles through ft_transfer', async () => {
+  const { vault, vendor, agents, usdc } = env;
+  const vendorBefore = await ftBalance(usdc, vendor);
+  const r = await requestPayment(agents[0], vault, {
+    requestId: 'usdc-1', recipient: vendor.accountId, amountUsdc: 7.5, token: usdc.accountId, memo: 'Inference credits',
+  });
+  assert.equal(r.outcome.outcome, 'dispatched');
+  assert.equal(await ftBalance(usdc, vendor) - vendorBefore, BigInt(U(7.5)));
+  const req = await vault.view('get_request', { key: r.outcome.key });
+  assert.equal(req.status, 'Settled');
+  assert.equal(req.token, usdc.accountId);
+  const t = await usdcView(vault, usdc);
+  assert.equal(t.balance, U(492.5));
+  assert.equal(t.shared_spent, U(7.5));
+  // The vault's own record matches the token contract.
+  assert.equal(BigInt(t.balance), await ftBalance(usdc, vault));
+  // NEAR budgets are separate.
+  const limits = await vault.view('get_agent_token_limits', { agent: agents[0].accountId });
+  assert.equal(limits[0][1].spent, U(7.5));
+});
+
+test('USDC: injected drain to the attacker is rejected, no tokens move', async () => {
+  const { vault, attacker, agents, usdc } = env;
+  const before = await ftBalance(usdc, vault);
+  const r = await requestPayment(agents[0], vault, {
+    requestId: 'usdc-inj', recipient: attacker.accountId, amountUsdc: 400, token: usdc.accountId,
+  });
+  assert.deepEqual(r.outcome, { outcome: 'rejected', reason: 'recipient_not_allowlisted' });
+  assert.equal(await ftBalance(usdc, vault), before);
+  const blocked = await vault.view('list_blocked', {});
+  assert.equal(blocked[0].token, usdc.accountId);
+});
+
+test('USDC: unregistered recipient fails cleanly and the budget comes back', async () => {
+  const { root, owner, vault, agents, usdc } = env;
+  const fresh = await root.createSubAccount('fresh-vendor', { initialBalance: N(2) });
+  await owner.call(vault, 'allow_recipient', { recipient: fresh.accountId });
+  const before = await usdcView(vault, usdc);
+  const r = await requestPayment(agents[1], vault, {
+    requestId: 'usdc-unreg', recipient: fresh.accountId, amountUsdc: 3, token: usdc.accountId,
+  });
+  assert.equal(r.outcome.outcome, 'dispatched');
+  const req = await vault.view('get_request', { key: r.outcome.key });
+  assert.equal(req.status, 'Failed');
+  assert.equal(req.failure_reason, 'recipient_not_registered');
+  const after = await usdcView(vault, usdc);
+  assert.equal(after.balance, before.balance);
+  assert.equal(after.shared_reserved, '0');
+  assert.equal(after.in_flight, '0');
+  assert.equal(BigInt(after.balance), await ftBalance(usdc, vault));
+  const limits = await vault.view('get_agent_token_limits', { agent: agents[1].accountId });
+  assert.equal(limits[0][1].reserved, '0');
+});
+
+test('USDC: big payment waits for the owner, then settles', async () => {
+  const { owner, vault, vendor, agents, usdc } = env;
+  const r = await requestPayment(agents[2], vault, {
+    requestId: 'usdc-big', recipient: vendor.accountId, amountUsdc: 20, token: usdc.accountId,
+  });
+  assert.equal(r.outcome.outcome, 'pending_approval');
+  assert.equal((await usdcView(vault, usdc)).pending_approval, U(20));
+  await owner.call(vault, 'approve', { key: r.outcome.key }, { gas: (150n * 10n ** 12n).toString() });
+  const req = await vault.view('get_request', { key: r.outcome.key });
+  assert.equal(req.status, 'Settled');
+  const t = await usdcView(vault, usdc);
+  assert.equal(t.pending_approval, '0');
+  assert.equal(BigInt(t.balance), await ftBalance(usdc, vault));
+});
+
+test('USDC: tokens from a contract the owner never added are refunded', async () => {
+  const { root, owner, vault } = env;
+  const fake = await root.createSubAccount('fake-usd', { initialBalance: N(10) });
+  await fake.deploy((await import('../src/vault.js')).FT_WASM);
+  await fake.call(fake, 'new', { symbol: 'FAKE', decimals: 6 });
+  await owner.call(fake, 'storage_deposit', { account_id: vault.accountId }, { attachedDeposit: N(0.01) });
+  await fake.call(fake, 'mint', { account_id: owner.accountId, amount: U(10) });
+  await owner.call(fake, 'ft_transfer_call', { receiver_id: vault.accountId, amount: U(10), msg: '' },
+    { attachedDeposit: '1', gas: (100n * 10n ** 12n).toString() });
+  assert.equal(await fake.view('ft_balance_of', { account_id: owner.accountId }), U(10));
+  assert.equal((await vault.view('list_tokens', {})).length, 1);
 });

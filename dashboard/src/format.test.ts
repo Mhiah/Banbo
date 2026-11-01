@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { near, toYocto, pct, ago } from './format';
+import { near, toYocto, toUnits, units, pct, ago } from './format';
 
 describe('amounts', () => {
   it('round-trips NEAR and yoctoNEAR exactly', () => {
@@ -23,5 +23,15 @@ describe('amounts', () => {
   it('formats relative time', () => {
     expect(ago(1000, 3000)).toBe('just now');
     expect(ago(0, 3 * 60_000)).toBe('3m ago');
+  });
+});
+
+describe('token amounts', () => {
+  it('shows USDC with cents and parses 6 decimals', () => {
+    expect(units('7500000', 6)).toBe('7.50');
+    expect(units('490100000', 6)).toBe('490.10');
+    expect(units('1', 6)).toBe('0.00');
+    expect(toUnits('12.345678', 6)).toBe('12345678');
+    expect(() => toUnits('1.0000001', 6)).toThrow();
   });
 });

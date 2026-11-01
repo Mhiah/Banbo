@@ -31,9 +31,14 @@ The agent's runtime only holds a function-call access key restricted to `vault.r
 | T10 | Vault runs out of storage/gas money | Fixed 0.5 NEAR operating reserve plus storage cost excluded from spendable balance | unit |
 | T11 | Rejection spam fills storage | Rejections never become payment requests; only registered agents are logged, in a 50-entry ring buffer | unit |
 | T12 | Approved recipient removed while a request is pending | `approve` re-checks the allowlist | unit |
+| T13 | Token payment to a recipient not registered with the token contract | `storage_balance_of` check before `ft_transfer`; on failure the request ends `Failed` and budget and tokens are restored once | unit + sandbox |
+| T14 | Fake token contract credits the vault to inflate balances | `ft_on_transfer` only credits tokens the owner added (by contract account); anything else is refunded | unit + sandbox |
+| T15 | Token spending used to exceed NEAR budgets or the reverse | Separate shared cap and per-agent limits per asset | unit + sandbox |
+| T16 | Odd token responses make a callback panic and strand a reservation | Callbacks read the raw promise result with a size bound and treat anything unexpected as failure | unit |
 
 ## Out of scope / known gaps
 - Owner key compromise: the owner is fully trusted.
+- Token contracts are trusted once the owner adds them: a malicious token could report a transfer it did not make. Only add tokens you trust, such as Circle's native USDC.
 - Judgment about whether an allowlisted payment is sensible (limits only).
-- Callback out-of-gas leaves a request InFlight; no recovery method yet.
+- Callback out-of-gas leaves a request InFlight; no recovery method yet (token payments have one more callback hop, with fixed gas for each).
 - Metadata privacy: payments, memos and events are public on-chain.

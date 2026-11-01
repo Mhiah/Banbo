@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useBanbo } from '../state';
 import { activity } from '../activity';
 import type { Agent } from '../near';
-import { near, toYocto, ago, reasonText, short } from '../format';
+import { near, units, toYocto, ago, reasonText, short } from '../format';
+import { assetOf } from '../near';
 import { Panel, PageHeader, StatusBadge, Addr, Amount, MiniBar, Empty, Dialog, Drawer, ChangeSummary } from '../ui';
 
 export default function Agents() {
@@ -52,7 +53,7 @@ export default function Agents() {
           </div>
         )}
       </Panel>
-      <p className="footnote">Amounts in NEAR. “Used today” includes payments that are reserved but not yet confirmed.</p>
+      <p className="footnote">Limits in NEAR. Token limits, such as USDC, are on each agent’s page. “Used today” includes payments that are reserved but not yet confirmed.</p>
 
       <Drawer open={!!sel} title={sel ? short(sel[0]) : ''} onClose={() => setSelected(null)}>
         {sel && <AgentDetail id={sel[0]} agent={sel[1]} />}
@@ -83,7 +84,27 @@ function AgentDetail({ id, agent }: { id: string; agent: Agent }) {
         <dt>Needs approval above</dt><dd><Amount yocto={agent.approval_threshold} /></dd>
         <dt>Can pay</dt><dd>{s.allowlist.length} allowed recipient{s.allowlist.length === 1 ? '' : 's'} (shared by all agents)</dd>
       </dl>
-      <div className="bar-row"><MiniBar value={used} max={agent.period_limit} /><span className="muted small">{near(used)} of {near(agent.period_limit)} used</span></div>
+      <div className="bar-row"><MiniBar value={used} max={agent.period_limit} /><span className="muted small">{near(used)} of {near(agent.period_limit)} NEAR used</span></div>
+      {s.tokens.length > 0 && (
+        <>
+          <h4>Token limits</h4>
+          {(s.tokenLimits[id] ?? []).length === 0 ? <p className="muted small">This agent can only pay in NEAR.</p> : (
+            <ul className="token-limits">
+              {(s.tokenLimits[id] ?? []).map(([token, l]) => {
+                const a = assetOf(s, token);
+                const u = (BigInt(l.spent) + BigInt(l.reserved)).toString();
+                return (
+                  <li key={token}>
+                    <div className="tl-head"><strong>{a.symbol}</strong><span className="muted small">{units(u, a.decimals)} of {units(l.period_limit, a.decimals)} used today</span></div>
+                    <MiniBar value={u} max={l.period_limit} />
+                    <div className="muted xs">Max {units(l.per_tx_max, a.decimals)} per payment · approval above {units(l.approval_threshold, a.decimals)}</div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </>
+      )}
 
       {b.isOwner && (
         <div className="detail-actions">
@@ -99,7 +120,7 @@ function AgentDetail({ id, agent }: { id: string; agent: Agent }) {
         <ul className="mini-feed">
           {items.map((i) => (
             <li key={i.id}>
-              <div><span className="num">{near(i.amount)} NEAR</span> → <span className="mono">{short(i.recipient)}</span>
+              <div><Amount yocto={i.amount} asset={i.asset} /> → <span className="mono">{short(i.recipient)}</span>
                 {i.reason && <div className="reason">{reasonText(i.reason)}</div>}
               </div>
               <div className="r"><StatusBadge kind={i.kind} /><div className="muted xs">{ago(i.at, b.now)}</div></div>

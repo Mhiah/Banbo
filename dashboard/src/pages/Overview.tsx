@@ -1,6 +1,7 @@
 import { useBanbo } from '../state';
 import { activity, STATUS } from '../activity';
-import { near, ago, reasonText, short } from '../format';
+import { near, units, ago, reasonText, short } from '../format';
+import { assetOf } from '../near';
 import { Panel, PageHeader, StatusBadge, Addr, Amount, BudgetBar, MiniBar, Empty } from '../ui';
 
 export default function Overview() {
@@ -41,6 +42,29 @@ export default function Overview() {
           <div><span className="label">Blocked in last 24h</span><span className={`num ${blockedToday ? 'red' : ''}`}>{blockedToday}</span></div>
           <div><span className="label">Blocked all time</span><span className="num">{s.blockedCount}</span></div>
         </div>
+        {s.tokens.map((t) => {
+          const asset = assetOf(s, t.token);
+          return (
+            <div className="treasury token" key={t.token}>
+              <div className="treasury-main">
+                <div className="label">{t.symbol} balance</div>
+                <div className="mid"><Amount yocto={t.balance} asset={asset} strong /></div>
+                <div className="sub">
+                  <Amount yocto={t.available} asset={asset} /> available to agents
+                  {BigInt(t.in_flight) > 0n && <><span className="sep">·</span><Amount yocto={t.in_flight} asset={asset} /> being sent</>}
+                  {BigInt(t.pending_approval) > 0n && <><span className="sep">·</span><Amount yocto={t.pending_approval} asset={asset} /> held for approval</>}
+                </div>
+              </div>
+              <div className="treasury-budget">
+                <div className="label-row">
+                  <span className="label">{t.symbol} shared daily limit</span>
+                  <span className="num"><Amount yocto={(BigInt(t.shared_spent) + BigInt(t.shared_reserved)).toString()} asset={asset} /> of {units(t.shared_cap, t.decimals)}</span>
+                </div>
+                <BudgetBar spent={t.shared_spent} reserved={t.shared_reserved} cap={t.shared_cap} asset={asset} />
+              </div>
+            </div>
+          );
+        })}
       </Panel>
 
       {pending.length > 0 && (
@@ -48,7 +72,7 @@ export default function Overview() {
           <ul className="approvals">
             {pending.map((r) => (
               <li key={r.key}>
-                <div className="ap-amount"><Amount yocto={r.amount} strong /></div>
+                <div className="ap-amount"><Amount yocto={r.amount} asset={assetOf(s, r.token)} strong /></div>
                 <div className="ap-main">
                   <div><span className="mono">{short(r.agent)}</span> wants to pay <Addr id={r.recipient} explorer={b.explorer} /></div>
                   <div className="muted small">{r.memo ? `“${r.memo}” · ` : ''}requested {ago(r.created_at_ms, b.now)} · above this agent’s approval threshold</div>
@@ -101,7 +125,7 @@ export default function Overview() {
                 {recent.map((i) => (
                   <tr key={i.id} className={i.kind === 'blocked' ? 'row-blocked' : ''}>
                     <td className="c-agent"><span className="mono">{short(i.agent)}</span></td>
-                    <td className="r num c-amt">{near(i.amount)}</td>
+                    <td className="r num c-amt"><Amount yocto={i.amount} asset={i.asset} /></td>
                     <td className="c-rcpt">
                       <span className="mono">{short(i.recipient)}</span>
                       {i.reason && <div className="reason">{reasonText(i.reason)}</div>}
