@@ -1,6 +1,6 @@
-// The demo's three acts, shared by the CLI demo and the sandbox server that
+// The demo's acts, shared by the CLI demo and the sandbox server that
 // backs the dashboard. Every payment is a real transaction on the node.
-import { requestPayment, events, fmt } from './vault.js';
+import { requestPayment, events, fmt, fmtU, N } from './vault.js';
 import { runLlmAgent, hasCredentials, COMPROMISED_SCRIPT, MODEL, INVOICE_URL } from './agent.js';
 
 const tty = process.stdout.isTTY;
@@ -122,12 +122,48 @@ export async function actApproval(env, { log = console.log, approve = true } = {
     entry.approveTx = ap.result.transaction.hash;
   }
   act.payments.push(entry);
+  log('');
+  return act;
+}
+
+/**
+ * Act 4: paying in USDC (NEP-141). One payment settles through ft_transfer;
+ * one goes to an allowed account that never registered with the token, which
+ * the vault catches before sending, so nothing is lost.
+ */
+export async function actUsdc(env, { log = console.log } = {}) {
+  const { root, owner, vault, vendor, agents, usdc } = env;
+  if (!usdc) return { name: 'usdc', payments: [] };
+  const research = agents[0];
+  const run = ++runId;
+  log(bold('Act 4: paying in USDC'));
+  log('  Same rules, separate USDC limits. Token payments check that the recipient can');
+  log('  receive the token first, so a payment can\'t vanish into an unregistered account.\n');
+  const act = { name: 'usdc', payments: [] };
+  const ftBal = async (id) => fmtU(await usdc.view('ft_balance_of', { account_id: id }));
+
+  const before = await ftBal(vendor.accountId);
+  const id1 = `usdc-r${run}-a`;
+  const r1 = await requestPayment(research, vault, { requestId: id1, recipient: vendor.accountId, amountUsdc: 7.5, token: usdc.accountId, memo: 'Inference credits, 5k calls' });
+  show(log, `7.50 USDC → ${vendor.accountId}`, r1);
+  log(`      vendor USDC balance: ${before} → ${await ftBal(vendor.accountId)}`);
+  act.payments.push({ requestId: id1, recipient: vendor.accountId, amountUsdc: 7.5, memo: 'Inference credits, 5k calls', outcome: r1.outcome, tx: r1.hash });
+
+  const fresh = await root.createSubAccount(`new-vendor-r${run}`, { initialBalance: N(1) });
+  await owner.call(vault, 'allow_recipient', { recipient: fresh.accountId });
+  const id2 = `usdc-r${run}-b`;
+  const r2 = await requestPayment(research, vault, { requestId: id2, recipient: fresh.accountId, amountUsdc: 3, token: usdc.accountId, memo: 'Trial invoice' });
+  show(log, `3.00 USDC → ${fresh.accountId} (allowed, but not registered with USDC)`, r2);
+  const req = await vault.view('get_request', { key: r2.outcome.key });
+  log(`      final status: ${red(req.status)} (${req.failure_reason}), budget released, no USDC left the vault`);
+  act.payments.push({ requestId: id2, recipient: fresh.accountId, amountUsdc: 3, memo: 'Trial invoice', outcome: r2.outcome, finalStatus: req.status, failureReason: req.failure_reason, tx: r2.hash });
+  log('');
   return act;
 }
 
 /** Normal agent traffic: small legitimate payments to the vendor. */
 export async function actRoutine(env, { log = console.log, count = 3 } = {}) {
-  const { vault, vendor, agents } = env;
+  const { vault, vendor, agents, usdc } = env;
   const run = ++runId;
   const memos = ['Weather API: forecast calls', 'Geocoding API top-up', 'Vector DB storage, November'];
   const act = { name: 'routine', payments: [] };
@@ -136,7 +172,13 @@ export async function actRoutine(env, { log = console.log, count = 3 } = {}) {
     const amountNear = [0.12, 0.05, 0.08][i % 3];
     const r = await requestPayment(agent, vault, { requestId: `routine-r${run}-${i}`, recipient: vendor.accountId, amountNear, memo: memos[i % 3] });
     show(log, `${agent.accountId}: ${amountNear} NEAR → ${vendor.accountId}`, r);
-    act.payments.push({ outcome: r.outcome, tx: r.hash });
+    act.payments.push({ recipient: vendor.accountId, amountNear, memo: memos[i % 3], outcome: r.outcome, tx: r.hash });
+  }
+  if (usdc) {
+    const memo = 'Search API, monthly plan';
+    const r = await requestPayment(agents[1], vault, { requestId: `routine-r${run}-usdc`, recipient: vendor.accountId, amountUsdc: 2.4, token: usdc.accountId, memo });
+    show(log, `${agents[1].accountId}: 2.40 USDC → ${vendor.accountId}`, r);
+    act.payments.push({ recipient: vendor.accountId, amountUsdc: 2.4, memo, outcome: r.outcome, tx: r.hash });
   }
   return act;
 }

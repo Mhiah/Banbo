@@ -32,8 +32,11 @@ export interface PaymentRequest {
   request_id: string;
   recipient: string;
   amount: string;
+  /** NEP-141 token contract, or null for NEAR. */
+  token: string | null;
   memo: string;
   status: Status;
+  failure_reason: string | null;
   period_index: number;
   created_at_ms: number;
 }
@@ -42,10 +45,38 @@ export interface BlockedAttempt {
   request_id: string;
   recipient: string;
   amount: string;
+  token: string | null;
   reason: string;
   memo: string;
   at_ms: number;
 }
+export interface Limits {
+  per_tx_max: string;
+  period_limit: string;
+  approval_threshold: string;
+  period_index: number;
+  spent: string;
+  reserved: string;
+}
+export interface TokenView {
+  token: string;
+  symbol: string;
+  decimals: number;
+  balance: string;
+  pending_approval: string;
+  in_flight: string;
+  available: string;
+  shared_cap: string;
+  shared_spent: string;
+  shared_reserved: string;
+}
+/** How to show an amount: NEAR or a token. */
+export interface Asset {
+  token: string | null;
+  symbol: string;
+  decimals: number;
+}
+export const NEAR_ASSET: Asset = { token: null, symbol: 'NEAR', decimals: 24 };
 export interface Balances {
   vault_balance: string;
   operating_reserve: string;
@@ -72,6 +103,15 @@ export interface VaultState {
   requests: PaymentRequest[];
   blocked: BlockedAttempt[];
   blockedCount: number;
+  tokens: TokenView[];
+  /** agent → [token, limits][] */
+  tokenLimits: Record<string, [string, Limits][]>;
+}
+
+export function assetOf(state: Pick<VaultState, 'tokens'>, token: string | null | undefined): Asset {
+  if (!token) return NEAR_ASSET;
+  const t = state.tokens.find((x) => x.token === token);
+  return t ? { token, symbol: t.symbol, decimals: t.decimals } : { token, symbol: token, decimals: 0 };
 }
 
 // ------------------------------------------------------------------- reads
@@ -104,7 +144,7 @@ export async function view<T>(nodeUrl: string, contractId: string, method: strin
 
 export async function loadVault(nodeUrl: string, contractId: string): Promise<VaultState> {
   const v = <T,>(m: string, a: object = {}) => view<T>(nodeUrl, contractId, m, a);
-  const [config, balances, agents, allowlist, requests, blocked, blockedCount] = await Promise.all([
+  const [config, balances, agents, allowlist, requests, blocked, blockedCount, tokens] = await Promise.all([
     v<Config>('get_config'),
     v<Balances>('get_balances'),
     v<[string, Agent][]>('list_agents'),
@@ -112,8 +152,14 @@ export async function loadVault(nodeUrl: string, contractId: string): Promise<Va
     v<PaymentRequest[]>('list_requests', { limit: 100 }),
     v<BlockedAttempt[]>('list_blocked'),
     v<number>('blocked_count'),
+    v<TokenView[]>('list_tokens'),
   ]);
-  return { config, balances, agents, allowlist, requests, blocked, blockedCount };
+  const tokenLimits: Record<string, [string, Limits][]> = {};
+  if (tokens.length) {
+    const lists = await Promise.all(agents.map(([id]) => v<[string, Limits][]>('get_agent_token_limits', { agent: id })));
+    agents.forEach(([id], i) => (tokenLimits[id] = lists[i]));
+  }
+  return { config, balances, agents, allowlist, requests, blocked, blockedCount, tokens, tokenLimits };
 }
 
 // ------------------------------------------------------------------ writes
@@ -131,6 +177,7 @@ export interface SandboxConfig {
   agents: string[];
   vendor: string;
   attacker: string;
+  usdc: string | null;
   llmAgent: boolean;
 }
 
@@ -211,7 +258,7 @@ export function walletWriter(h: WalletHandle, contractId: string): Writer {
       const w = await h.selector.wallet();
       const out = await w.signAndSendTransaction({
         receiverId: contractId,
-        actions: [actionCreators.functionCall(method, args, 100_000_000_000_000n, BigInt(deposit))],
+        actions: [actionCreators.functionCall(method, args, 150_000_000_000_000n, BigInt(deposit))],
       });
       if (!out) return undefined;
       const status = out.status as { Failure?: unknown };

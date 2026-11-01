@@ -1,6 +1,6 @@
 // One list of everything that happened, from authoritative contract state:
 // payment requests (stored per request) and blocked attempts (ring buffer).
-import type { VaultState, Status } from './near';
+import { assetOf, type Asset, type VaultState, type Status } from './near';
 
 export type Kind = 'blocked' | Status;
 
@@ -11,9 +11,11 @@ export interface ActivityItem {
   agent: string;
   recipient: string;
   amount: string;
+  asset: Asset;
   memo: string;
   requestId: string;
   key?: string;
+  /** Why it was blocked, or why a payment failed. */
   reason?: string;
   raw: unknown;
 }
@@ -36,6 +38,7 @@ export function activity(state: VaultState): ActivityItem[] {
       agent: b.agent,
       recipient: b.recipient,
       amount: b.amount,
+      asset: assetOf(state, b.token),
       memo: b.memo,
       requestId: b.request_id,
       reason: b.reason,
@@ -48,9 +51,11 @@ export function activity(state: VaultState): ActivityItem[] {
       agent: r.agent,
       recipient: r.recipient,
       amount: r.amount,
+      asset: assetOf(state, r.token),
       memo: r.memo,
       requestId: r.request_id,
       key: r.key,
+      reason: r.failure_reason ?? undefined,
       raw: r,
     })),
   ];

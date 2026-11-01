@@ -5,3 +5,4 @@ demo/out/
 *.log
 .near-credentials/
 dashboard/dist/
+contract/mock-ft/target/

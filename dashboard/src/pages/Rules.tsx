@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useBanbo } from '../state';
-import type { Agent } from '../near';
-import { near, toYocto, short } from '../format';
+import { NEAR_ASSET, assetOf, type Asset } from '../near';
+import { near, units, toUnits, short } from '../format';
 import { Panel, PageHeader, Addr, Amount, Dialog, ChangeSummary, Empty } from '../ui';
 
 type Pending = { title: string; rows: [string, ReactNode, ReactNode][]; note?: ReactNode; label: string; method: string; args: object; danger?: boolean };
@@ -11,8 +11,8 @@ export default function Rules() {
   const s = b.state!;
   const bal = s.balances;
   const [pending, setPending] = useState<Pending | null>(null);
-  const [editCap, setEditCap] = useState(false);
-  const [editAgent, setEditAgent] = useState<string | null>(null);
+  const [editCap, setEditCap] = useState<string | null>(null); // 'NEAR' or token id
+  const [editAgent, setEditAgent] = useState<{ id: string; token: string | null } | null>(null);
   const [newRecipient, setNewRecipient] = useState('');
   const [recErr, setRecErr] = useState('');
   const owner = b.isOwner;
@@ -20,7 +20,7 @@ export default function Rules() {
   useEffect(() => {
     const q = new URLSearchParams(window.location.hash.split('?')[1] ?? '');
     const a = q.get('agent');
-    if (a) setEditAgent(a);
+    if (a) setEditAgent({ id: a, token: null });
   }, []);
 
   const used = BigInt(bal.shared_spent) + BigInt(bal.shared_reserved);
@@ -36,7 +36,7 @@ export default function Rules() {
       <PageHeader title="Spending Rules" subtitle="You decide what each agent can spend and where it can send funds. The contract enforces these rules on every payment." />
       {!owner && <div className="alert">You’re viewing these rules read-only. Only the vault owner ({short(s.config.owner)}) can change them.</div>}
 
-      <Panel title="Shared daily limit" action={owner && <button className="btn" onClick={() => setEditCap(true)}>Change</button>}>
+      <Panel title="Shared daily limit" action={owner && <button className="btn" onClick={() => setEditCap('NEAR')}>Change</button>}>
         <div className="rule-row">
           <div className="rule-value"><Amount yocto={bal.shared_cap} strong /></div>
           <div className="rule-desc">The most all agents together can spend in one {hours}-hour period. Today: <Amount yocto={used.toString()} /> used.</div>
@@ -55,7 +55,7 @@ export default function Rules() {
                     <td className="r num" data-label="Max per payment">{near(a.per_tx_max)}</td>
                     <td className="r num" data-label="Daily limit">{near(a.period_limit)}</td>
                     <td className="r num" data-label="Needs approval above">{near(a.approval_threshold)}</td>
-                    <td className="r act">{owner && <button className="btn sm" onClick={() => setEditAgent(id)}>Edit</button>}</td>
+                    <td className="r act">{owner && <button className="btn sm" onClick={() => setEditAgent({ id, token: null })}>Edit</button>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -64,8 +64,43 @@ export default function Rules() {
         )}
       </Panel>
 
+      {s.tokens.map((t) => {
+        const asset = assetOf(s, t.token);
+        const f = (v: string) => units(v, t.decimals);
+        const tUsed = BigInt(t.shared_spent) + BigInt(t.shared_reserved);
+        return (
+          <Panel key={t.token} title={`${t.symbol} payments`} flush action={owner && <button className="btn" onClick={() => setEditCap(t.token)}>Change shared limit</button>}>
+            <div className="rule-row pad">
+              <div className="rule-value"><Amount yocto={t.shared_cap} asset={asset} strong /></div>
+              <div className="rule-desc">Shared daily limit for {t.symbol} across all agents. Today: <Amount yocto={tUsed.toString()} asset={asset} /> used. Token contract <span className="mono">{short(t.token)}</span>.</div>
+            </div>
+            <div className="table-wrap">
+              <table className="table stack">
+                <thead><tr><th>Agent</th><th className="r">Max per payment</th><th className="r">Daily limit</th><th className="r">Needs approval above</th><th /></tr></thead>
+                <tbody>
+                  {s.agents.map(([id]) => {
+                    const l = (s.tokenLimits[id] ?? []).find(([tok]) => tok === t.token)?.[1];
+                    return (
+                      <tr key={id}>
+                        <td><span className="mono">{short(id)}</span></td>
+                        {l ? <>
+                          <td className="r num" data-label="Max per payment">{f(l.per_tx_max)}</td>
+                          <td className="r num" data-label="Daily limit">{f(l.period_limit)}</td>
+                          <td className="r num" data-label="Needs approval above">{f(l.approval_threshold)}</td>
+                        </> : <td colSpan={3} className="muted" data-label={t.symbol}>Can’t pay in {t.symbol}</td>}
+                        <td className="r act">{owner && <button className="btn sm" onClick={() => setEditAgent({ id, token: t.token })}>{l ? 'Edit' : 'Allow'}</button>}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+        );
+      })}
+
       <Panel title="Allowed recipients">
-        <p className="muted">Agents can only send funds to these accounts. A payment to anyone else, including one an agent was tricked into, is rejected by the contract.</p>
+        <p className="muted">Agents can only send funds to these accounts. A payment to anyone else, including one an agent was tricked into, is rejected by the contract.{s.tokens.length > 0 && ' For token payments, the recipient must also be registered with the token contract, or the payment fails safely and the funds stay in the vault.'}</p>
         {s.allowlist.length === 0 ? <p className="muted"><em>No recipients allowed yet. Agents can’t pay anyone.</em></p> : (
           <ul className="list">
             {s.allowlist.map((r) => (
@@ -113,9 +148,9 @@ export default function Rules() {
         </div>
       </Panel>
 
-      <CapDialog open={editCap} onClose={() => setEditCap(false)} onReview={(p) => { setEditCap(false); setPending(p); }} />
-      {editAgent && s.agents.find(([id]) => id === editAgent) && (
-        <AgentDialog id={editAgent} agent={s.agents.find(([id]) => id === editAgent)![1]} onClose={() => setEditAgent(null)} onReview={(p) => { setEditAgent(null); setPending(p); }} />
+      {editCap && <CapDialog which={editCap} onClose={() => setEditCap(null)} onReview={(p) => { setEditCap(null); setPending(p); }} />}
+      {editAgent && s.agents.some(([id]) => id === editAgent.id) && (
+        <AgentDialog id={editAgent.id} token={editAgent.token} onClose={() => setEditAgent(null)} onReview={(p) => { setEditAgent(null); setPending(p); }} />
       )}
 
       <Dialog open={!!pending} title={pending?.title ?? ''} onClose={() => setPending(null)}
@@ -133,62 +168,80 @@ export default function Rules() {
   );
 }
 
-function CapDialog({ open, onClose, onReview }: { open: boolean; onClose: () => void; onReview: (p: Pending) => void }) {
+function CapDialog({ which, onClose, onReview }: { which: string; onClose: () => void; onReview: (p: Pending) => void }) {
   const b = useBanbo();
-  const bal = b.state!.balances;
-  const [v, setV] = useState('');
+  const s = b.state!;
+  const t = which === 'NEAR' ? null : s.tokens.find((x) => x.token === which)!;
+  const asset: Asset = t ? assetOf(s, t.token) : NEAR_ASSET;
+  const cap = t ? t.shared_cap : s.balances.shared_cap;
+  const used = t ? BigInt(t.shared_spent) + BigInt(t.shared_reserved) : BigInt(s.balances.shared_spent) + BigInt(s.balances.shared_reserved);
+  const f = (v: string) => `${units(v, asset.decimals)} ${asset.symbol}`;
+  const [v, setV] = useState(units(cap, asset.decimals).replace(/,/g, ''));
   const [err, setErr] = useState('');
-  useEffect(() => { if (open) { setV(near(bal.shared_cap).replace(/,/g, '')); setErr(''); } }, [open]); // eslint-disable-line
-  const used = BigInt(bal.shared_spent) + BigInt(bal.shared_reserved);
-  const left = (cap: bigint) => (cap > used ? cap - used : 0n).toString();
+  const left = (c: bigint) => (c > used ? c - used : 0n).toString();
   return (
-    <Dialog open={open} title="Change shared daily limit" onClose={onClose}
+    <Dialog open title={`Change ${t ? `${t.symbol} ` : ''}shared daily limit`} onClose={onClose}
       footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" form="cap-form">Review</button></>}>
       <form id="cap-form" className="form" onSubmit={(e) => {
         e.preventDefault();
         try {
-          const cap = toYocto(v);
+          const next = toUnits(v, asset.decimals);
           onReview({
-            title: 'Review change', label: 'Shared daily limit updated', method: 'set_shared_cap', args: { shared_cap: cap },
+            title: 'Review change', label: `${t ? `${t.symbol} s` : 'S'}hared daily limit updated`,
+            method: t ? 'add_token' : 'set_shared_cap',
+            args: t ? { token: t.token, symbol: t.symbol, decimals: t.decimals, shared_cap: next } : { shared_cap: next },
             rows: [
-              ['Shared daily limit', `${near(bal.shared_cap)} NEAR`, `${near(cap)} NEAR`],
-              ['Left for today', `${near(left(BigInt(bal.shared_cap)))} NEAR`, `${near(left(BigInt(cap)))} NEAR`],
+              ['Shared daily limit', f(cap), f(next)],
+              ['Left for today', f(left(BigInt(cap))), f(left(BigInt(next)))],
             ],
-            note: BigInt(cap) < used ? 'This is below what’s already been used today, so agents can’t spend more until the next period.' : undefined,
+            note: BigInt(next) < used ? 'This is below what’s already been used today, so agents can’t spend more until the next period.' : undefined,
           });
         } catch (x) { setErr((x as Error).message); }
       }}>
-        <label className="field"><span>New limit (NEAR)</span><input value={v} onChange={(e) => setV(e.target.value)} inputMode="decimal" /></label>
+        <label className="field"><span>New limit ({asset.symbol})</span><input value={v} onChange={(e) => setV(e.target.value)} inputMode="decimal" autoFocus /></label>
         {err && <div className="form-err" role="alert">{err}</div>}
       </form>
     </Dialog>
   );
 }
 
-function AgentDialog({ id, agent, onClose, onReview }: { id: string; agent: Agent; onClose: () => void; onReview: (p: Pending) => void }) {
-  const clean = (y: string) => near(y).replace(/,/g, '');
-  const [f, setF] = useState({ perTx: clean(agent.per_tx_max), daily: clean(agent.period_limit), threshold: clean(agent.approval_threshold) });
+function AgentDialog({ id, token, onClose, onReview }: { id: string; token: string | null; onClose: () => void; onReview: (p: Pending) => void }) {
+  const b = useBanbo();
+  const s = b.state!;
+  const asset = assetOf(s, token);
+  const current = token
+    ? (s.tokenLimits[id] ?? []).find(([t]) => t === token)?.[1] ?? null
+    : s.agents.find(([a]) => a === id)![1];
+  const clean = (y: string) => units(y, asset.decimals).replace(/,/g, '');
+  const [f, setF] = useState(current
+    ? { perTx: clean(current.per_tx_max), daily: clean(current.period_limit), threshold: clean(current.approval_threshold) }
+    : { perTx: '', daily: '', threshold: '' });
   const [err, setErr] = useState('');
   const field = (k: keyof typeof f, label: string) => (
-    <label className="field"><span>{label}</span><input value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value })} inputMode="decimal" /></label>
+    <label className="field"><span>{label} ({asset.symbol})</span><input value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value })} inputMode="decimal" /></label>
   );
+  const fmt = (v: string) => `${units(v, asset.decimals)} ${asset.symbol}`;
   return (
-    <Dialog open title={`Edit limits · ${short(id)}`} onClose={onClose}
+    <Dialog open title={`${current ? 'Edit' : 'Allow'} ${token ? `${asset.symbol} ` : ''}limits · ${short(id)}`} onClose={onClose}
       footer={<><button className="btn" onClick={onClose}>Cancel</button><button className="btn primary" form="agent-form">Review</button></>}>
       <form id="agent-form" className="form" onSubmit={(e) => {
         e.preventDefault();
         try {
-          const args = { agent: id, per_tx_max: toYocto(f.perTx), period_limit: toYocto(f.daily), approval_threshold: toYocto(f.threshold) };
-          if (BigInt(args.per_tx_max) > BigInt(args.period_limit)) throw new Error('Max per payment can’t be higher than the daily limit.');
-          const row = (label: string, a: string, b: string): [string, ReactNode, ReactNode] => [label, `${near(a)} NEAR`, `${near(b)} NEAR`];
+          const lim = { per_tx_max: toUnits(f.perTx, asset.decimals), period_limit: toUnits(f.daily, asset.decimals), approval_threshold: toUnits(f.threshold, asset.decimals) };
+          if (BigInt(lim.per_tx_max) > BigInt(lim.period_limit)) throw new Error('Max per payment can’t be higher than the daily limit.');
+          const row = (label: string, a: string | undefined, n: string): [string, ReactNode, ReactNode] => [label, a ? fmt(a) : 'None', fmt(n)];
           onReview({
-            title: 'Review change', label: `Limits updated for ${short(id)}`, method: 'add_agent', args,
+            title: 'Review change', label: `${token ? `${asset.symbol} l` : 'L'}imits updated for ${short(id)}`,
+            method: token ? 'set_agent_token_limits' : 'add_agent',
+            args: token ? { agent: id, token, ...lim } : { agent: id, ...lim },
             rows: [
-              row('Max per payment', agent.per_tx_max, args.per_tx_max),
-              row('Daily limit', agent.period_limit, args.period_limit),
-              row('Needs approval above', agent.approval_threshold, args.approval_threshold),
+              row('Max per payment', current?.per_tx_max, lim.per_tx_max),
+              row('Daily limit', current?.period_limit, lim.period_limit),
+              row('Needs approval above', current?.approval_threshold, lim.approval_threshold),
             ],
-            note: 'Today’s spending so far is kept. Saving also re-enables the agent if it was disabled.',
+            note: token
+              ? (current ? 'Today’s spending so far is kept.' : `This agent will be able to pay allowed recipients in ${asset.symbol}, within these limits.`)
+              : 'Today’s spending so far is kept. Saving also re-enables the agent if it was disabled.',
           });
         } catch (x) { setErr((x as Error).message); }
       }}>

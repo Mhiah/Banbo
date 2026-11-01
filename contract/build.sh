@@ -12,4 +12,10 @@ WASM_OPT="${WASM_OPT:-../demo/node_modules/.bin/wasm-opt}"
 "$WASM_OPT" -Oz --signext-lowering --llvm-memory-copy-fill-lowering \
   --enable-bulk-memory --enable-sign-ext \
   target/wasm32-unknown-unknown/release/banbo.wasm -o res/banbo.wasm
-ls -la res/banbo.wasm
+# Test-only NEP-141 token that stands in for USDC on the local sandbox.
+(cd mock-ft && RUSTFLAGS="--cfg near -C target-cpu=mvp -C link-arg=-s" \
+  cargo build --release --target wasm32-unknown-unknown)
+"$WASM_OPT" -Oz --signext-lowering --llvm-memory-copy-fill-lowering \
+  --enable-bulk-memory --enable-sign-ext \
+  mock-ft/target/wasm32-unknown-unknown/release/mock_ft.wasm -o res/mock_ft.wasm
+ls -la res/
