@@ -11,5 +11,5 @@ mkdir -p res
 WASM_OPT="${WASM_OPT:-../demo/node_modules/.bin/wasm-opt}"
 "$WASM_OPT" -Oz --signext-lowering --llvm-memory-copy-fill-lowering \
   --enable-bulk-memory --enable-sign-ext \
-  target/wasm32-unknown-unknown/release/atomicguard.wasm -o res/atomicguard.wasm
-ls -la res/atomicguard.wasm
+  target/wasm32-unknown-unknown/release/banbo.wasm -o res/banbo.wasm
+ls -la res/banbo.wasm

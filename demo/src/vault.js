@@ -1,4 +1,4 @@
-// Shared helpers: start a local NEAR sandbox, deploy AtomicGuard, seed policy.
+// Shared helpers: start a local NEAR sandbox, deploy Banbo, seed policy.
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pkg from 'near-workspaces';
@@ -14,7 +14,7 @@ if (!process.env.NEAR_PRINT_LOGS) {
 }
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-export const WASM = path.resolve(here, '../../contract/res/atomicguard.wasm');
+export const WASM = path.resolve(here, '../../contract/res/banbo.wasm');
 
 export const YOCTO = 10n ** 24n;
 /** NEAR (number, up to 3 decimals) -> yoctoNEAR string */
@@ -76,10 +76,10 @@ export async function requestPayment(agent, vault, { requestId, recipient, amoun
   };
 }
 
-/** Parse AtomicGuard NEP-297 events from logs. */
+/** Parse Banbo NEP-297 events from logs. */
 export function events(logs) {
   return logs
     .filter((l) => l.startsWith('EVENT_JSON:'))
     .map((l) => JSON.parse(l.slice('EVENT_JSON:'.length)))
-    .filter((e) => e.standard === 'atomicguard');
+    .filter((e) => e.standard === 'banbo');
 }

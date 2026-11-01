@@ -33,13 +33,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "atomicguard"
-version = "0.1.0"
-dependencies = [
- "near-sdk",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -67,6 +60,13 @@ dependencies = [
  "dunce",
  "fs_extra",
  "pkg-config",
+]
+
+[[package]]
+name = "banbo"
+version = "0.1.0"
+dependencies = [
+ "near-sdk",
 ]
 
 [[package]]

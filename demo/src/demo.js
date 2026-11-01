@@ -1,4 +1,4 @@
-// One-command demo: starts a local NEAR node, deploys AtomicGuard and runs
+// One-command demo: starts a local NEAR node, deploys Banbo and runs
 // three acts. Every payment below is a real transaction against the contract.
 //
 //   npm run demo              # uses Claude if ANTHROPIC_API_KEY is set, else scripted agent
@@ -31,7 +31,7 @@ function show(label, r) {
 }
 
 async function main() {
-  log(bold('\nAtomicGuard: an agent wallet firewall on NEAR\n'));
+  log(bold('\nBanbo: an agent wallet firewall on NEAR\n'));
   log(dim('Starting a local NEAR node and deploying the vault...'));
   const env = await setupVault();
   const { worker, owner, vault, vendor, attacker, agents } = env;

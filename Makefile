@@ -3,7 +3,7 @@
 setup:            ## install demo deps + NEAR sandbox node
 	cd demo && npm install
 
-build:            ## rebuild contract/res/atomicguard.wasm (needs Rust)
+build:            ## rebuild contract/res/banbo.wasm (needs Rust)
 	./contract/build.sh
 
 test-contract:    ## Rust unit tests

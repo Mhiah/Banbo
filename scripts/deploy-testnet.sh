@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Deploy AtomicGuard to NEAR testnet and give an agent a restricted key.
+# Deploy Banbo to NEAR testnet and give an agent a restricted key.
 # Needs near-cli-rs (https://github.com/near/near-cli-rs) and testnet accounts
 # you control. Usage:
 #   OWNER=you.testnet VAULT=vault.you.testnet AGENT=agent.you.testnet \
 #   VENDOR=vendor.testnet ./scripts/deploy-testnet.sh
 set -euo pipefail
 : "${OWNER:?}" "${VAULT:?}" "${AGENT:?}" "${VENDOR:?}"
-WASM="$(dirname "$0")/../contract/res/atomicguard.wasm"
+WASM="$(dirname "$0")/../contract/res/banbo.wasm"
 NEAR() { printf '%s000000000000000000000' "$(awk "BEGIN{printf \"%d\", $1*1000}")"; }
 
 near account create-account fund-myself "$VAULT" '12 NEAR' autogenerate-new-keypair \
