@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
-  NETWORKS, NETWORK_IDS, DEFAULT_VAULT, type NetworkId, type VaultState, type Writer, type SandboxConfig, type WalletHandle,
+  NETWORKS, NETWORK_IDS, FACTORY, type NetworkId, type VaultState, type Writer, type SandboxConfig, type WalletHandle,
   loadVault, sandboxConfig, sandboxWriter, wallet, walletWriter, prettyError, signUnlock,
 } from './near';
 import { keyPairFromPassphrase, keyPairFromSignature, unlockMessage, unlockNonce, type OwnerKeys } from './privacy';
@@ -20,14 +20,18 @@ function startNetwork(): NetworkId {
   const saved = ls.get('network') as NetworkId;
   return NETWORK_IDS.includes(saved) ? saved : NETWORK_IDS[0];
 }
-/** The vault last used on a network; a public build falls back to its demo vault on testnet. */
-function savedContract(n: NetworkId): string {
-  return ls.get(`contract:${n}`) || (n === 'testnet' ? DEFAULT_VAULT : '');
+/** The vault this account last opened on a network. Nothing is shown before a wallet connects. */
+function savedContract(n: NetworkId, account: string | null | undefined): string {
+  return account ? ls.get(`contract:${n}:${account}`) : '';
+}
+/** A vault named in the link (#/overview?vault=...), opened for viewing. */
+function linkedVault(): string {
+  return cleanAccountId(new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('vault') ?? '');
 }
 
 function useBanboState() {
   const [network, setNetworkRaw] = useState<NetworkId>(startNetwork);
-  const [contractInput, setContractInput] = useState(() => savedContract(startNetwork()));
+  const [contractInput, setContractInput] = useState(linkedVault);
   const [sandbox, setSandbox] = useState<SandboxConfig | null>(null);
   const [sandboxDown, setSandboxDown] = useState(false);
   const [handle, setHandle] = useState<WalletHandle | null>(null);
@@ -52,10 +56,28 @@ function useBanboState() {
 
   const setNetwork = (n: NetworkId) => {
     ls.set('network', n);
-    setContractInput(savedContract(n));
+    setContractInput(savedContract(n, writer?.accountId));
     setNetworkRaw(n);
   };
-  const setContract = (v: string) => { setContractInput(v); ls.set(`contract:${network}`, cleanAccountId(v)); };
+  const setContract = (v: string) => {
+    setContractInput(v);
+    if (writer?.accountId) ls.set(`contract:${network}:${writer.accountId}`, cleanAccountId(v));
+  };
+
+  // A link that names a vault opens it.
+  useEffect(() => {
+    const on = () => { const v = linkedVault(); if (v) setContractInput(v); };
+    window.addEventListener('hashchange', on);
+    return () => window.removeEventListener('hashchange', on);
+  }, []);
+  // Connecting a wallet opens that account's vault; signing out closes it.
+  const account = network === 'sandbox' ? null : writer?.accountId ?? null;
+  const firstAccount = useRef(true);
+  useEffect(() => {
+    if (network === 'sandbox') return;
+    if (firstAccount.current) { firstAccount.current = false; if (linkedVault() && !account) return; }
+    setContractInput(linkedVault() || savedContract(network, account));
+  }, [account, network]);
 
   useEffect(() => setKeys(null), [network, contractId]);
 
@@ -88,18 +110,19 @@ function useBanboState() {
     return () => { stop = true; };
   }, [network]);
 
-  // wallet
+  // wallet: available before any vault is chosen, so a visitor can connect first.
+  const walletContract = network === 'sandbox' ? '' : FACTORY[network] ?? contractId;
   useEffect(() => {
-    if (network === 'sandbox' || !contractId) return;
+    if (network === 'sandbox' || !walletContract) return;
     let unsub: (() => void) | undefined;
-    wallet(network, contractId).then((h) => {
+    wallet(network, walletContract).then((h) => {
       setHandle(h);
       setWriter(walletWriter(h, contractId));
       const sub = h.selector.store.observable.subscribe(() => setWriter(walletWriter(h, contractId)));
       unsub = () => sub.unsubscribe();
     }).catch((e) => toast('err', `Wallet: ${prettyError(e)}`));
     return () => unsub?.();
-  }, [network, contractId, toast]);
+  }, [network, walletContract, contractId, toast]);
 
   // Public RPC nodes rate-limit, so testnet/mainnet are read less often, one
   // read at a time, and a single failed read doesn't replace a vault already
@@ -107,6 +130,8 @@ function useBanboState() {
   const reading = useRef<Promise<void> | null>(null);
   const failures = useRef(0);
   const loaded = useRef(false);
+  const shown = useRef(contractId);
+  shown.current = contractId;
   /** Read the vault. A poll skips if a read is running; after a change (`fresh`), wait for it and read again. */
   const refresh = useCallback(async (fresh = false) => {
     if (!nodeUrl || !contractId) return;
@@ -116,13 +141,18 @@ function useBanboState() {
     }
     const run = (async () => {
       try {
-        setState(await loadVault(nodeUrl, contractId));
+        const next = await loadVault(nodeUrl, contractId);
+        if (shown.current !== contractId) return; // the visitor switched vaults meanwhile
+        setState(next);
         setLoadError(null);
         failures.current = 0;
         loaded.current = true;
       } catch (e) {
+        if (shown.current !== contractId) return;
         failures.current += 1;
-        if (network === 'sandbox' || failures.current >= 3 || !loaded.current) setLoadError(prettyError(e));
+        // Public nodes refuse bursts now and then: retry quietly before showing an error.
+        if (network === 'sandbox' || failures.current >= 3) setLoadError(prettyError(e));
+        else if (!loaded.current) setTimeout(() => refresh(), 3000 * failures.current);
         if (network === 'sandbox') { setSandboxDown(true); setSandbox(null); }
       }
     })();
@@ -134,8 +164,11 @@ function useBanboState() {
     failures.current = 0;
     loaded.current = false;
     refresh();
-    const t = setInterval(() => { refresh(); setNow(Date.now()); }, network === 'sandbox' ? 2000 : 6000);
-    return () => clearInterval(t);
+    // Testnet and mainnet use free public nodes: read every 15 s, and not while the tab is hidden.
+    const t = setInterval(() => { setNow(Date.now()); if (network === 'sandbox' || !document.hidden) refresh(); }, network === 'sandbox' ? 2000 : 15000);
+    const onShow = () => { if (!document.hidden) refresh(); };
+    document.addEventListener('visibilitychange', onShow);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', onShow); };
   }, [refresh, network]);
 
   const isOwner = !!state && !!writer?.accountId && writer.accountId === state.config.owner;

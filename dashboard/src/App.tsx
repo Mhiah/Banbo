@@ -69,11 +69,13 @@ function Shell() {
           <a href="#/overview" className="wordmark" aria-label="Banbo home">banbo<span>.</span></a>
           <button className="icon-btn nav-close" onClick={() => setNavOpen(false)} aria-label="Close menu">×</button>
         </div>
-        <div className="vault-ctx">
-          <div className="ctx-label">Vault</div>
-          <div className="ctx-value mono" title={b.contractId}>{b.contractId ? short(b.contractId) : 'Not selected'}</div>
-          {FACTORY[b.network] && <a className="link-btn xs" href="#/new">+ Create a vault</a>}
-        </div>
+        {b.contractId && (
+          <div className="vault-ctx">
+            <div className="ctx-label">Vault</div>
+            <div className="ctx-value mono" title={b.contractId}>{b.contractId ? short(b.contractId) : 'Not selected'}</div>
+            {FACTORY[b.network] && <a className="link-btn xs" href="#/new">+ Create a vault</a>}
+          </div>
+        )}
         <nav>
           {ROUTES.map((r) => (
             <a key={r.path} href={`#/${r.path}`} className={current.path === r.path ? 'active' : ''} aria-current={current.path === r.path ? 'page' : undefined}>
@@ -135,6 +137,14 @@ function VaultGate({ children }: { children: React.ReactNode }) {
         <pre>cd demo && npm install && npm run sandbox</pre>
         <p className="muted">It deploys a vault with three agents and keeps running. This page connects automatically.</p>
       </Empty>
+    );
+  }
+  if (b.network !== 'sandbox' && !b.contractId && !b.writer?.accountId) {
+    return (
+      <Empty title="Connect your wallet" action={<div className="empty-actions">
+        {b.handle && <button className="btn primary" onClick={() => b.handle!.modal.show()}>Connect wallet</button>}
+        <a className="btn" href="#/guide">Read the guide</a>
+      </div>} />
     );
   }
   if (b.network !== 'sandbox' && !b.contractId) {

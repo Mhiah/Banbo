@@ -6,7 +6,7 @@ This page is the shortest path to checking that claim yourself.
 
 ## 1. Look at the live vault (no install)
 
-Open **[mhiah.github.io/Banbo](https://mhiah.github.io/Banbo/)**. It reads the public testnet vault `vault.banbo-mia.testnet` straight from the chain. Anyone can look; only the owner's wallet can change anything.
+Open **[the demo vault on the live dashboard](https://mhiah.github.io/Banbo/#/overview?vault=vault.banbo-mia.testnet)**. It reads the testnet vault `vault.banbo-mia.testnet` straight from the chain, no wallet needed. Anyone can look; only the owner's wallet can change anything.
 
 - **Overview**: treasury, daily budget, agents.
 - **Agents** and **Spending Rules**: the limits the contract enforces for each agent.

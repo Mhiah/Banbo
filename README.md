@@ -146,7 +146,7 @@ Act 1 of the demo runs the Acme scenario as real transactions on a local NEAR no
 
 ## Try it
 
-**Live on NEAR testnet:** the owner dashboard is at **[mhiah.github.io/Banbo](https://mhiah.github.io/Banbo/)**. It opens on the public demo vault `vault.banbo-mia.testnet` and reads everything from the chain; anyone can look, only the owner's wallet can change anything.
+**Live on NEAR testnet:** the dashboard is at **[mhiah.github.io/Banbo](https://mhiah.github.io/Banbo/)**: connect a testnet wallet to create or open your vault. To look at the demo vault without a wallet, open **[this link](https://mhiah.github.io/Banbo/#/overview?vault=vault.banbo-mia.testnet)**; it reads everything from the chain, and only the owner's wallet can change anything.
 
 To run everything locally:
 

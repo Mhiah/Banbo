@@ -23,8 +23,6 @@ const working = new Map<string, string>();
 export const SANDBOX_API = import.meta.env.VITE_SANDBOX_API ?? 'http://localhost:3031';
 /** A public build (e.g. GitHub Pages): no local sandbox, no dev Demo page. */
 export const HOSTED = import.meta.env.VITE_HOSTED === '1';
-/** The vault a public build opens on testnet until the visitor picks another. */
-export const DEFAULT_VAULT: string = import.meta.env.VITE_DEFAULT_VAULT ?? '';
 /** The Banbo factory per network: creates vaults as `<name>.<factory>`. */
 export const FACTORY: Partial<Record<NetworkId, string>> = {
   testnet: import.meta.env.VITE_FACTORY_TESTNET ?? 'banbo-vaults.testnet',
@@ -231,7 +229,19 @@ export function assetOf(state: Pick<VaultState, 'tokens'>, token: string | null 
 // ------------------------------------------------------------------- reads
 
 let rpcId = 0;
+// At most 4 requests in flight: free public nodes refuse bursts.
+let inFlight = 0;
+const waiting: (() => void)[] = [];
+async function slot<T>(f: () => Promise<T>): Promise<T> {
+  if (inFlight >= 4) await new Promise<void>((r) => waiting.push(r));
+  inFlight += 1;
+  try { return await f(); } finally { inFlight -= 1; waiting.shift()?.(); }
+}
+
 async function rpcPost(url: string, method: string, params: unknown) {
+  return slot(() => rpcPostNow(url, method, params));
+}
+async function rpcPostNow(url: string, method: string, params: unknown) {
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

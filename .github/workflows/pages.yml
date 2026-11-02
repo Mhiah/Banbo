@@ -34,7 +34,6 @@ jobs:
         working-directory: dashboard
         env:
           VITE_HOSTED: '1'
-          VITE_DEFAULT_VAULT: vault.banbo-mia.testnet
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dashboard/dist

@@ -2,7 +2,7 @@
 
 > The security layer for AI agent wallets, on NEAR. An AI agent pays from a vault contract, and the contract decides every payment. Beyond limits and an allowlist, it checks who said so: under a task mandate, a recipient taken from an untrusted document is refused, and an amount from an untrusted sender is held for the owner. This is CaMeL's policy (arXiv 2503.18813, Google, Google DeepMind and ETH Zurich) enforced on-chain instead of inside the agent.
 
-Status: testnet only, unaudited. Live dashboard reading the public testnet vault vault.banbo-mia.testnet: https://mhiah.github.io/Banbo/
+Status: testnet only, unaudited. Live dashboard showing the testnet demo vault vault.banbo-mia.testnet: https://mhiah.github.io/Banbo/#/overview?vault=vault.banbo-mia.testnet
 
 Run it (Node 20+, Linux x86_64 or macOS Apple Silicon, no NEAR account or Rust needed): `make setup && make demo`. Act 1 is the invoice-fraud attack. All tests: `make test`.
 
