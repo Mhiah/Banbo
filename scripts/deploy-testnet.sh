@@ -12,7 +12,7 @@ set -euo pipefail
 WASM="$(dirname "$0")/../contract/res/banbo.wasm"
 NEAR() { printf '%s000000000000000000000' "$(awk "BEGIN{printf \"%d\", $1*1000}")"; }
 
-near account create-account fund-myself "$VAULT" '15 NEAR' autogenerate-new-keypair \
+near account create-account fund-myself "$VAULT" '15 NEAR' autogenerate-new-keypair --signature-scheme ed25519 \
   save-to-keychain sign-as "$OWNER" network-config testnet sign-with-keychain send
 
 near contract deploy "$VAULT" use-file "$WASM" with-init-call new \
@@ -29,10 +29,12 @@ near contract call-function as-transaction "$VAULT" allow_recipient \
 
 # The agent's runtime key: can only call request_payment on the vault. The
 # allowance only pays for gas, charged at each call's full prepaid gas
-# (100-150 Tgas, about 0.01-0.015 NEAR at the minimum gas price).
+# (100-150 Tgas, about 0.01-0.015 NEAR at the minimum gas price). The key is
+# saved as a file under ~/.near-credentials/testnet/ so the MCP server can use it
+# (BANBO_CREDENTIALS_FILE).
 near account add-key "$AGENT" grant-function-call-access --allowance '1 NEAR' \
   --contract-account-id "$VAULT" --function-names 'request_payment' \
-  autogenerate-new-keypair save-to-keychain network-config testnet sign-with-keychain send
+  autogenerate-new-keypair --signature-scheme ed25519 save-to-legacy-keychain network-config testnet sign-with-keychain send
 
 if [ "${WITH_USDC:-}" = 1 ]; then
   # Circle's native USDC on NEAR testnet (mainnet:
