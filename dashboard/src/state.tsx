@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   NETWORKS, type NetworkId, type VaultState, type Writer, type SandboxConfig, type WalletHandle,
   loadVault, sandboxConfig, sandboxWriter, wallet, walletWriter, prettyError, signUnlock,
@@ -91,22 +91,42 @@ function useBanboState() {
     return () => unsub?.();
   }, [network, contractId, toast]);
 
-  const refresh = useCallback(async () => {
+  // Public RPC nodes rate-limit, so testnet/mainnet are read less often, one
+  // read at a time, and a single failed read doesn't replace a vault already
+  // on screen with an error.
+  const reading = useRef<Promise<void> | null>(null);
+  const failures = useRef(0);
+  const loaded = useRef(false);
+  /** Read the vault. A poll skips if a read is running; after a change (`fresh`), wait for it and read again. */
+  const refresh = useCallback(async (fresh = false) => {
     if (!nodeUrl || !contractId) return;
-    try {
-      setState(await loadVault(nodeUrl, contractId));
-      setLoadError(null);
-    } catch (e) {
-      setLoadError(prettyError(e));
-      if (network === 'sandbox') { setSandboxDown(true); setSandbox(null); }
+    if (reading.current) {
+      if (!fresh) return;
+      await reading.current;
     }
+    const run = (async () => {
+      try {
+        setState(await loadVault(nodeUrl, contractId));
+        setLoadError(null);
+        failures.current = 0;
+        loaded.current = true;
+      } catch (e) {
+        failures.current += 1;
+        if (network === 'sandbox' || failures.current >= 3 || !loaded.current) setLoadError(prettyError(e));
+        if (network === 'sandbox') { setSandboxDown(true); setSandbox(null); }
+      }
+    })();
+    reading.current = run;
+    try { await run; } finally { if (reading.current === run) reading.current = null; }
   }, [nodeUrl, contractId, network]);
 
   useEffect(() => {
+    failures.current = 0;
+    loaded.current = false;
     refresh();
-    const t = setInterval(() => { refresh(); setNow(Date.now()); }, 2000);
+    const t = setInterval(() => { refresh(); setNow(Date.now()); }, network === 'sandbox' ? 2000 : 6000);
     return () => clearInterval(t);
-  }, [refresh]);
+  }, [refresh, network]);
 
   const isOwner = !!state && !!writer?.accountId && writer.accountId === state.config.owner;
 
@@ -116,7 +136,7 @@ function useBanboState() {
     setBusy(label);
     try {
       await writer.call(method, args, deposit);
-      await refresh();
+      await refresh(true);
       toast('ok', label);
       return true;
     } catch (e) {

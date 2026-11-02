@@ -87,7 +87,7 @@ export default function Demo() {
     try {
       const r = (await runScenario(id)) as Run;
       setRuns((x) => [{ ...r, name: title, at: Date.now() }, ...x].slice(0, 6));
-      await b.refresh();
+      await b.refresh(true);
     } catch (e) {
       b.toast('err', prettyError(e));
     } finally {
