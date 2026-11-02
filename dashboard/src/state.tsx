@@ -12,6 +12,9 @@ const ls = {
   set: (k: string, v: string) => localStorage.setItem(`banbo:${k}`, v),
 };
 
+/** A pasted account id: no surrounding spaces, no trailing full stop. */
+export const cleanAccountId = (v: string) => v.trim().replace(/\.+$/, '');
+
 function useBanboState() {
   const [network, setNetworkRaw] = useState<NetworkId>(() => (ls.get('network', 'sandbox') as NetworkId));
   const [contractInput, setContractInput] = useState(() => ls.get(`contract:${ls.get('network', 'sandbox')}`));
@@ -28,7 +31,7 @@ function useBanboState() {
   const [keys, setKeys] = useState<OwnerKeys | null>(null);
 
   const nodeUrl = network === 'sandbox' ? sandbox?.nodeUrl ?? '' : NETWORKS[network].nodeUrl;
-  const contractId = network === 'sandbox' ? sandbox?.contractId ?? '' : contractInput.trim();
+  const contractId = network === 'sandbox' ? sandbox?.contractId ?? '' : cleanAccountId(contractInput);
   const explorer = NETWORKS[network].explorer;
 
   const toast = useCallback((kind: Toast['kind'], text: string) => {
@@ -42,7 +45,7 @@ function useBanboState() {
     setContractInput(ls.get(`contract:${n}`));
     setNetworkRaw(n);
   };
-  const setContract = (v: string) => { setContractInput(v); ls.set(`contract:${network}`, v.trim()); };
+  const setContract = (v: string) => { setContractInput(v); ls.set(`contract:${network}`, cleanAccountId(v)); };
 
   useEffect(() => setKeys(null), [network, contractId]);
 
