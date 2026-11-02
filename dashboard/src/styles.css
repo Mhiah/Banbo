@@ -88,15 +88,16 @@ nav a.active::before { content: ""; position: absolute; }
 .nav-badge { background: var(--amber); color: #fff; font-size: 11px; font-weight: 600; min-width: 18px; height: 18px; border-radius: 9px; display: grid; place-items: center; padding: 0 5px; }
 .nav-tag { font-size: 10.5px; color: var(--ink-2); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font-weight: 500; }
 .nav-sep { height: 1px; background: var(--line); margin: 8px 6px; }
-.side-bottom { margin-top: auto; display: flex; flex-direction: column; gap: 12px; padding: 0 4px; }
 .net { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-2); font-weight: 500; padding: 0 6px; }
 .net-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-2); }
 .net-testnet .net-dot { background: var(--amber); }
 .net-mainnet .net-dot { background: var(--accent); }
 .net-sandbox .net-dot { background: var(--blue); }
-.wallet { border-top: 1px solid var(--line); padding: 12px 6px 0; display: flex; flex-direction: column; gap: 2px; }
+.wallet { display: flex; align-items: center; gap: 10px; font-size: 13px; }
 .content { min-width: 0; display: flex; flex-direction: column; }
-.topbar { display: none; }
+.topbar { display: flex; align-items: center; gap: 8px; padding: 10px 32px; min-height: 52px; background: var(--surface); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 20; }
+.topbar .menu, .topbar .wordmark { display: none; }
+.top-right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
 main { width: 100%; max-width: 1180px; margin: 0 auto; padding: 28px 32px 64px; outline: none; }
 .icon-btn { background: none; border: 0; width: 32px; height: 32px; border-radius: var(--r); display: grid; place-items: center; color: var(--ink-2); font-size: 20px; line-height: 1; }
 .icon-btn:hover { background: var(--gray-wash); color: var(--ink); }
@@ -109,8 +110,9 @@ main { width: 100%; max-width: 1180px; margin: 0 auto; padding: 28px 32px 64px; 
   .nav-open .sidebar { transform: none; box-shadow: 0 0 40px rgba(25, 42, 32, 0.15); }
   .nav-open .scrim { display: block; position: fixed; inset: 0; background: rgba(25, 42, 32, 0.25); z-index: 30; }
   .nav-close { display: grid; }
-  .topbar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: var(--surface); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 20; }
-  .top-paused { margin-left: auto; }
+  .topbar { padding: 10px 14px; }
+  .topbar .menu, .topbar .wordmark { display: flex; }
+  .top-right { gap: 10px; }
   main { padding: 20px 16px 56px; }
 }
 

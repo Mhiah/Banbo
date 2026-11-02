@@ -90,13 +90,6 @@ function Shell() {
             </a>
           </>}
         </nav>
-        <div className="side-bottom">
-          <div className={`net net-${b.network}`}>
-            <span className="net-dot" aria-hidden />
-            {b.network === 'sandbox' ? 'Local sandbox' : `NEAR ${NETWORKS[b.network].label}`}
-          </div>
-          <WalletBox />
-        </div>
       </aside>
       <div className="scrim" onClick={() => setNavOpen(false)} />
 
@@ -107,6 +100,13 @@ function Shell() {
           </button>
           <a href="#/overview" className="wordmark sm">banbo<span>.</span></a>
           {b.state?.config.paused && <span className="badge red top-paused"><span className="dot" />Vault paused</span>}
+          <div className="top-right">
+            <div className={`net net-${b.network}`} title={b.network === 'sandbox' ? 'Local sandbox' : `NEAR ${NETWORKS[b.network].label}`}>
+              <span className="net-dot" aria-hidden />
+              <span className="net-label">{b.network === 'sandbox' ? 'Local sandbox' : `NEAR ${NETWORKS[b.network].label}`}</span>
+            </div>
+            <WalletBox />
+          </div>
         </div>
         {b.state?.config.paused && current.path !== 'rules' && (
           <div className="alert danger" role="alert">
@@ -162,22 +162,15 @@ function VaultGate({ children }: { children: React.ReactNode }) {
 function WalletBox() {
   const b = useBanbo();
   if (b.network === 'sandbox') {
-    return (
-      <div className="wallet">
-        <div className="ctx-label">Signed in as</div>
-        <div className="mono small">{b.writer?.accountId ?? '-'}</div>
-        <div className="muted xs">Local dev key, held by the sandbox process</div>
-      </div>
-    );
+    return <div className="wallet" title="Local dev key, held by the sandbox process"><span className="mono">{b.writer?.accountId ? short(b.writer.accountId) : '-'}</span></div>;
   }
   if (!b.handle) return null;
   if (!b.writer?.accountId) {
-    return <button className="btn primary full" onClick={() => b.handle!.modal.show()}>Connect wallet</button>;
+    return <button className="btn primary sm" onClick={() => b.handle!.modal.show()}>Connect wallet</button>;
   }
   return (
     <div className="wallet">
-      <div className="ctx-label">Wallet</div>
-      <div className="mono small" title={b.writer.accountId}>{short(b.writer.accountId)}</div>
+      <span className="mono" title={b.writer.accountId}>{short(b.writer.accountId)}</span>
       <button className="link-btn xs" onClick={async () => (await b.handle!.selector.wallet()).signOut()}>Sign out</button>
     </div>
   );

@@ -41,7 +41,7 @@ const SECTIONS: Section[] = [
     title: 'Get started',
     body: <>
       <h3>1. Connect your wallet</h3>
-      <p>Click <strong>Connect wallet</strong> at the bottom of the sidebar and pick a NEAR wallet. Meteor Wallet works well on testnet; make sure the wallet is set to the same network as the dashboard (shown above the wallet button).</p>
+      <p>Click <strong>Connect wallet</strong> at the top right and pick a NEAR wallet. Meteor Wallet works well on testnet; make sure the wallet is set to the same network as the dashboard (shown next to the button).</p>
       <h3>2. Create a vault, or open yours</h3>
       <p><strong>Create a vault</strong> (in the sidebar, under the vault name) makes a new vault owned by your wallet, in one transaction.</p>
       <Fields rows={[
