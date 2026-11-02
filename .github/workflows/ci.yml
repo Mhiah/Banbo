@@ -29,6 +29,8 @@ jobs:
             contract/target
           key: contract-${{ hashFiles('contract/Cargo.lock', 'contract/rust-toolchain.toml') }}
       - run: cargo test --locked
+      - run: cargo test --locked
+        working-directory: contract/factory
 
   reproducible-build:
     name: Committed wasm matches the source

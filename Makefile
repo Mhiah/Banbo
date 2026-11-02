@@ -15,8 +15,8 @@ reproducible-build: ## rebuild contract/res/banbo.wasm in the pinned Docker imag
 verify-build:     ## check the committed wasm matches the source (needs Docker)
 	./scripts/reproducible-build.sh --check
 
-test-contract:    ## Rust unit tests
-	cd contract && cargo test
+test-contract:    ## Rust unit tests (vault and factory)
+	cd contract && cargo test && cd factory && cargo test
 
 test-sandbox:     ## integration tests on a local NEAR node (needs tee-agent and mcp deps too)
 	cd demo && npm test
