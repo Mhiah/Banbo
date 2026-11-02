@@ -51,9 +51,12 @@ jobs:
           cache-dependency-path: |
             demo/package-lock.json
             tee-agent/package-lock.json
-      # The sandbox tests also run the TEE agent's runtime code.
+            mcp/package-lock.json
+      # The sandbox tests also run the TEE agent's runtime code and the MCP server.
       - run: npm ci
         working-directory: tee-agent
+      - run: npm ci
+        working-directory: mcp
       - run: npm ci
         working-directory: demo
       - run: npm test
@@ -91,3 +94,23 @@ jobs:
           cache-dependency-path: tee-agent/package-lock.json
       - run: npm ci
       - run: npm test
+
+  mcp:
+    name: MCP server
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            mcp/package-lock.json
+            tee-agent/package-lock.json
+      # The server reuses the TEE agent's DKIM and label code.
+      - run: npm ci
+        working-directory: tee-agent
+      - run: npm ci
+        working-directory: mcp
+      - run: npm test
+        working-directory: mcp

@@ -27,8 +27,10 @@ near contract call-function as-transaction "$VAULT" allow_recipient \
   json-args "{\"recipient\":\"$VENDOR\"}" \
   prepaid-gas '30 Tgas' attached-deposit '0 NEAR' sign-as "$OWNER" network-config testnet sign-with-keychain send
 
-# The agent's runtime key: can only call request_payment on the vault.
-near account add-key "$AGENT" grant-function-call-access --allowance '0.25 NEAR' \
+# The agent's runtime key: can only call request_payment on the vault. The
+# allowance only pays for gas, charged at each call's full prepaid gas
+# (100-150 Tgas, about 0.01-0.015 NEAR at the minimum gas price).
+near account add-key "$AGENT" grant-function-call-access --allowance '1 NEAR' \
   --contract-account-id "$VAULT" --function-names 'request_payment' \
   autogenerate-new-keypair save-to-keychain network-config testnet sign-with-keychain send
 
