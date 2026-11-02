@@ -10,8 +10,23 @@
 //   BANBO_RECIPIENT_SALTS  JSON {"vendor.near": "<salt>"} for hidden vendors
 //   BANBO_ALLOW_FULL_ACCESS_KEY=1  accept a full-access key (local testing only)
 //
+//   banbo-mcp keygen [file]  make the agent's key (default ~/.banbo/agent-key.json)
+//
 // Logs go to stderr; stdout carries the MCP protocol.
 import fs from 'node:fs';
+import { keygen } from './keygen.js';
+
+if (process.argv[2] === 'keygen') {
+  try {
+    const { file, publicKey } = keygen(process.argv[3]);
+    console.log(`Saved the agent's private key to ${file} (keep it on this machine).`);
+    console.log(`Public key, for the dashboard's "Connect an agent" screen:\n${publicKey}`);
+    process.exit(0);
+  } catch (e) {
+    console.error(`banbo-mcp keygen: ${e.message}`);
+    process.exit(1);
+  }
+}
 import { KeyPair } from 'near-api-js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { openVault } from './vault.js';

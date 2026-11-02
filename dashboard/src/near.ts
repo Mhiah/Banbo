@@ -450,3 +450,43 @@ export async function createVault(h: WalletHandle, factory: string, name: string
   if (!vault) throw new Error(`“${name}.${factory}” couldn’t be created (the name may be taken). Your deposit was refunded.`);
   return vault;
 }
+
+/**
+ * Create the agent's own account as `<name>.<owner>` holding only the given
+ * public key, restricted to calling request_payment on the vault, then
+ * register it on the vault with its limits. Two wallet-signed transactions.
+ * The private key never reaches the browser: the agent's machine made it
+ * (`banbo-mcp keygen`) and only the public key is pasted here.
+ */
+export async function connectAgent(h: WalletHandle, o: {
+  owner: string; vault: string; agent: string; publicKey: string; fundYocto: string; allowanceYocto: string;
+  perTxMax: string; periodLimit: string; approvalThreshold: string;
+}): Promise<void> {
+  const w = await h.selector.wallet();
+  const { PublicKey } = await import('@near-js/crypto');
+  const pk = PublicKey.fromString(o.publicKey);
+  const outs = await w.signAndSendTransactions({
+    transactions: [
+      {
+        signerId: o.owner,
+        receiverId: o.agent,
+        actions: [
+          actionCreators.createAccount(),
+          actionCreators.transfer(BigInt(o.fundYocto)),
+          actionCreators.addKey(pk, actionCreators.functionCallAccessKey(o.vault, ['request_payment'], BigInt(o.allowanceYocto))),
+        ],
+      },
+      {
+        signerId: o.owner,
+        receiverId: o.vault,
+        actions: [actionCreators.functionCall('add_agent', {
+          agent: o.agent, per_tx_max: o.perTxMax, period_limit: o.periodLimit, approval_threshold: o.approvalThreshold,
+        }, 50_000_000_000_000n, 0n)],
+      },
+    ],
+  });
+  for (const out of outs ?? []) {
+    const status = out.status as { Failure?: unknown };
+    if (status && typeof status === 'object' && 'Failure' in status) throw new Error(prettyError(JSON.stringify(status.Failure)));
+  }
+}

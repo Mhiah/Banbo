@@ -11,6 +11,7 @@ import Activity from './pages/Activity';
 import Privacy from './pages/Privacy';
 import Demo from './pages/Demo';
 import CreateVault from './pages/CreateVault';
+import ConnectAgent from './pages/ConnectAgent';
 import Settings from './pages/Settings';
 
 const ROUTES = [
@@ -24,6 +25,7 @@ const ROUTES = [
 ] as const;
 const DEMO = { path: 'demo', label: 'Demo', el: Demo };
 const CREATE = { path: 'new', label: 'Create a vault', el: CreateVault };
+const CONNECT = { path: 'connect', label: 'Connect an agent', el: ConnectAgent };
 
 function useRoute() {
   const read = () => window.location.hash.replace(/^#\/?/, '').split('?')[0] || 'overview';
@@ -50,7 +52,7 @@ function Shell() {
   const [navOpen, setNavOpen] = useState(false);
   useEffect(() => setNavOpen(false), [route]);
 
-  const all = HOSTED ? [...ROUTES, CREATE] : [...ROUTES, CREATE, DEMO];
+  const all = HOSTED ? [...ROUTES, CREATE, CONNECT] : [...ROUTES, CREATE, CONNECT, DEMO];
   const current = all.find((r) => r.path === route) ?? ROUTES[0];
   const Page = current.el;
   const needsVault = current.path !== 'settings' && current.path !== 'demo' && current.path !== 'new';

@@ -33,7 +33,17 @@ Needs Node 20+ and a vault where the owner has added this agent (`add_agent`) an
 make setup     # installs mcp/ and tee-agent/ (the server reuses the DKIM and label code)
 ```
 
-**1. Give the agent a function-call key** that can only call `request_payment` on the vault. With [near-cli-rs](https://github.com/near/near-cli-rs), signed by the agent account:
+**1. Give the agent a function-call key** that can only call `request_payment` on the vault.
+
+*From the dashboard (no CLI).* On the machine that will run the agent:
+
+```bash
+node mcp/src/index.js keygen    # saves ~/.banbo/agent-key.json (readable only by you), prints the public key
+```
+
+Paste the printed public key into the dashboard's **Connect an agent** page (Agents → Connect a new agent), signed in as the vault owner. Your wallet signs two transactions: one creates the agent account `<name>.<owner>` holding only that restricted key, the other adds the agent to the vault with its limits. The page then shows the MCP config to paste; `BANBO_CREDENTIALS_FILE` is `~/.banbo/agent-key.json`. The private key never leaves your machine.
+
+*Or with* [near-cli-rs](https://github.com/near/near-cli-rs), signed by the agent account:
 
 ```bash
 near account add-key agent.you.testnet grant-function-call-access --allowance '1 NEAR' \
@@ -82,7 +92,7 @@ Memos are encrypted to the owner automatically when the vault has an encryption 
 ## Tests
 
 ```bash
-cd mcp && npm test          # 17 unit tests: amounts, key checks, labels, refusals, wording
+cd mcp && npm test          # 18 unit tests: amounts, key checks, labels, refusals, wording
 make test-sandbox           # includes 7 end-to-end tests against the real contract on a local NEAR node
 ```
 

@@ -18,7 +18,10 @@ export default function Agents() {
       <PageHeader
         title="Agents"
         subtitle="Each agent spends from the shared vault within its own limits."
-        action={b.isOwner && <button className="btn primary" onClick={() => setRegistering(true)}>Register agent</button>}
+        action={b.isOwner && <div className="form-actions">
+          {b.network !== 'sandbox' && <a className="btn primary" href="#/connect">Connect a new agent</a>}
+          <button className={`btn ${b.network === 'sandbox' ? 'primary' : ''}`} onClick={() => setRegistering(true)}>Register existing account</button>
+        </div>}
       />
       <Panel flush>
         {s.agents.length === 0 ? (
