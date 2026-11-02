@@ -1,4 +1,4 @@
-# Banbo: the wallet firewall for AI agents
+# Banbo: the security layer for AI agent wallets
 
 **Enforced by the contract, not the prompt.**
 
