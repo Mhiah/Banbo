@@ -96,14 +96,21 @@ export function Skeleton({ rows = 3 }: { rows?: number }) {
 /** Accessible dialog: focus trap-lite, Escape to close, returns focus. */
 export function Dialog({ open, title, onClose, children, footer }: { open: boolean; title: string; onClose: () => void; children: ReactNode; footer?: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
+  // Parents pass a new onClose on every render (the vault refreshes every few
+  // seconds), so keep it in a ref: the effect below must run only when the
+  // dialog opens, or it would pull focus out of the field being typed in.
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
     if (!open) return;
     const prev = document.activeElement as HTMLElement | null;
-    ref.current?.querySelector<HTMLElement>('input, button, [tabindex]')?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    const box = ref.current;
+    (box?.querySelector<HTMLElement>('.dialog-body input, .dialog-body select, .dialog-body textarea')
+      ?? box?.querySelector<HTMLElement>('.dialog-foot button, button, [tabindex]'))?.focus();
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close.current();
     document.addEventListener('keydown', onKey);
     return () => { document.removeEventListener('keydown', onKey); prev?.focus(); };
-  }, [open, onClose]);
+  }, [open]);
   if (!open) return null;
   return (
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -120,12 +127,14 @@ export function Dialog({ open, title, onClose, children, footer }: { open: boole
 }
 
 export function Drawer({ open, title, onClose, children }: { open: boolean; title: string; onClose: () => void; children: ReactNode }) {
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close.current();
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  }, [open]);
   if (!open) return null;
   return (
     <div className="overlay right" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
