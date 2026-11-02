@@ -421,3 +421,26 @@ h3.sub { font-size: 13px; font-weight: 600; margin: 18px 0 2px; }
 .origin-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-2); margin-bottom: 6px; }
 .origin-box .kv { margin: 0; }
 .origin-box dd { overflow-wrap: anywhere; }
+
+/* Guide */
+.guide { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 20px; align-items: start; }
+.guide-nav { display: flex; flex-direction: column; gap: 2px; position: sticky; top: 16px; }
+.guide-nav a { padding: 8px 12px; border-radius: 8px; color: var(--ink-2); text-decoration: none; font-size: 14px; }
+.guide-nav a:hover { background: var(--accent-wash); color: var(--ink); }
+.guide-nav a.active { background: var(--accent-wash); color: var(--accent-ink); font-weight: 600; }
+.guide-body { max-width: 720px; line-height: 1.6; }
+.guide-body p, .guide-body ul { margin: 0 0 12px; }
+.guide-body ul { padding-left: 20px; }
+.guide-body li { margin-bottom: 4px; }
+.guide-body h3 { font-size: 15px; margin: 20px 0 8px; }
+.guide-body h3:first-child { margin-top: 0; }
+.guide-fields { margin: 0 0 16px; border-top: 1px solid var(--line); }
+.guide-fields > div { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.guide-fields dt { font-weight: 600; }
+.guide-fields dd { margin: 0; color: var(--ink-2); }
+@media (max-width: 860px) {
+  .guide { grid-template-columns: 1fr; }
+  .guide-nav { flex-direction: row; overflow-x: auto; position: static; padding-bottom: 4px; }
+  .guide-nav a { white-space: nowrap; }
+  .guide-fields > div { grid-template-columns: 1fr; gap: 2px; }
+}

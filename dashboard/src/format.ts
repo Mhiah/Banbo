@@ -51,7 +51,7 @@ export function ago(ms: number, now = Date.now()): string {
   return new Date(ms).toLocaleDateString();
 }
 
-const REASONS: Record<string, string> = {
+export const REASONS: Record<string, string> = {
   recipient_not_allowlisted: 'Recipient not on the allowlist',
   exceeds_per_request_max: 'Over the per-payment limit',
   exceeds_agent_period_limit: "Over this agent's daily limit",

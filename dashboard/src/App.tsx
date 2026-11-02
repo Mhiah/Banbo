@@ -4,6 +4,7 @@ import { NETWORKS, HOSTED, FACTORY } from './near';
 import { short } from './format';
 import { Empty, Skeleton } from './ui';
 import Overview from './pages/Overview';
+import Guide from './pages/Guide';
 import Agents from './pages/Agents';
 import Rules from './pages/Rules';
 import Tasks from './pages/Tasks';
@@ -16,6 +17,7 @@ import Settings from './pages/Settings';
 
 const ROUTES = [
   { path: 'overview', label: 'Overview', el: Overview },
+  { path: 'guide', label: 'Guide', el: Guide },
   { path: 'agents', label: 'Agents', el: Agents },
   { path: 'tasks', label: 'Mandates', el: Tasks },
   { path: 'rules', label: 'Spending Rules', el: Rules },
@@ -55,7 +57,7 @@ function Shell() {
   const all = HOSTED ? [...ROUTES, CREATE, CONNECT] : [...ROUTES, CREATE, CONNECT, DEMO];
   const current = all.find((r) => r.path === route) ?? ROUTES[0];
   const Page = current.el;
-  const needsVault = current.path !== 'settings' && current.path !== 'demo' && current.path !== 'new';
+  const needsVault = current.path !== 'settings' && current.path !== 'guide' && current.path !== 'demo' && current.path !== 'new';
 
   useEffect(() => { document.title = `${current.label} · Banbo`; }, [current.label]);
 
@@ -176,7 +178,6 @@ function WalletBox() {
     <div className="wallet">
       <div className="ctx-label">Wallet</div>
       <div className="mono small" title={b.writer.accountId}>{short(b.writer.accountId)}</div>
-      {b.state && !b.isOwner && <div className="warn-text xs">Not the vault owner. Read-only.</div>}
       <button className="link-btn xs" onClick={async () => (await b.handle!.selector.wallet()).signOut()}>Sign out</button>
     </div>
   );
