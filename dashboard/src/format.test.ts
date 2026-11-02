@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { near, toYocto, toUnits, units, pct, ago, duration, until } from './format';
+import { near, toYocto, toUnits, units, pct, ago, duration, until, originText, reasonText } from './format';
 
 describe('amounts', () => {
   it('round-trips NEAR and yoctoNEAR exactly', () => {
@@ -44,5 +44,20 @@ describe('risk rule durations', () => {
     expect(duration(10 * 60_000)).toBe('10 minutes');
     expect(until(3_600_000, 0)).toBe('in 1h');
     expect(until(42 * 60_000, 0)).toBe('in 42m');
+  });
+});
+
+describe('originText', () => {
+  it('describes each kind of origin in words', () => {
+    expect(originText({ kind: 'owner' })).toBe('you (the owner)');
+    expect(originText({ kind: 'source', source: 'email:acme.com' })).toBe('an email from acme.com (DKIM verified)');
+    expect(originText({ kind: 'source', source: 'email:unverified' })).toBe('an email that failed DKIM');
+    expect(originText({ kind: 'source', source: 'web:portal.acme.com' })).toBe('the web page at portal.acme.com');
+    expect(originText({ kind: 'source', source: 'doc:inv.pdf' })).toBe('the file inv.pdf');
+    expect(originText(null)).toBe('not labelled');
+  });
+  it('explains the new refusal reasons', () => {
+    expect(reasonText('recipient_from_untrusted_source')).toMatch(/document/);
+    expect(reasonText('amount_from_untrusted_source')).toMatch(/source/);
   });
 });

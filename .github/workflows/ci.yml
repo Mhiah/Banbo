@@ -58,7 +58,7 @@ jobs:
         working-directory: demo
       - run: npm test
         working-directory: demo
-      - name: Scripted 7-act demo
+      - name: Scripted 8-act demo
         run: npm run demo
         working-directory: demo
 

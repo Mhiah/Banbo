@@ -3,8 +3,7 @@
 // tests can show what happens when the reader is fooled.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
-import { dkimSign } from 'mailauth';
+import { resolver, mail, signed } from '../src/origin/testmail.js';
 import {
   OWNER, fromSource, join, toContract, sha256,
   validatePlan, parseJsonReply, coerce, plannerPrompt,
@@ -13,37 +12,6 @@ import {
 } from '../src/origin/index.js';
 
 // --------------------------------------------------------------- fixtures
-
-const keys = new Map(); // domain -> { pem, pub }
-function domainKey(domain) {
-  if (!keys.has(domain)) {
-    const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
-    keys.set(domain, {
-      pem: privateKey.export({ type: 'pkcs1', format: 'pem' }),
-      pub: publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
-    });
-  }
-  return keys.get(domain);
-}
-// A stand-in for DNS: serves the test keys for s1._domainkey.<domain>.
-const resolver = async (name, type) => {
-  const m = /^s1\._domainkey\.(.+)$/.exec(name);
-  if (type === 'TXT' && m && keys.has(m[1])) return [[`v=DKIM1; k=rsa; p=${keys.get(m[1]).pub}`]];
-  const e = new Error(`no record for ${name}`); e.code = 'ENOTFOUND'; throw e;
-};
-
-function mail({ from, subject, body }) {
-  return [
-    `From: ${from}`, 'To: ap@company.example', `Subject: ${subject}`,
-    'Date: Mon, 2 Nov 2026 10:00:00 +0000', `Message-ID: <${crypto.randomUUID()}@x>`, '', body, '',
-  ].join('\r\n');
-}
-async function signed(domain, msg) {
-  const k = domainKey(domain);
-  const s = await dkimSign(msg, { canonicalization: 'relaxed/relaxed', signatureData: [{ signingDomain: domain, selector: 's1', privateKey: k.pem }] });
-  assert.deepEqual(s.errors, []);
-  return s.signatures + msg;
-}
 
 const TASK = {
   id: 'acme-oct', description: "Pay Acme's October invoice", payees: ['acme.testnet'], token: null,

@@ -4,6 +4,7 @@
 - NEAR held by the vault contract.
 - The policy: agent registry, limits, allowlist, pause state.
 - In private mode: the vendor list and payment memos (confidentiality), and a TEE agent's key and prompts.
+- The owner's intent for a job: a task's payees, budget, caps and trusted sources (origin-checked payments, see ORIGIN_CHECKS.md).
 
 ## Actors and authority
 
@@ -14,6 +15,9 @@
 | Vault contract | Send transfers it has reserved for | Act without a request or an owner approval |
 | TEE agent (implicit account, key inside an Intel TDX VM) | `attest_agent` with a quote bound to its own account, then `request_payment` | Attest as another account, attest with an unapproved image |
 | Proposed owner | `accept_ownership` | Anything else until accepted |
+| Origin runtime: planner (privileged model) | Write a plan from the owner's request and the on-chain task | See any document text; use any operation besides `extract` and `pay` |
+| Origin runtime: reader (quarantined model) | Return typed fields from one document | Call tools, change the plan, or remove the document's label from what it returns |
+| Document sender (email, web page, file) | Put any text in front of the reader | Make its values owner-origin, or be trusted unless the owner lists its source on the task |
 | Anyone | `deposit`, `expire_pending` (only releases approvals that are already overdue), view methods | Spend, read hidden vendors or sealed memos, initialize the contract |
 
 The agent's runtime only holds a function-call access key restricted to `vault.request_payment` with a small gas allowance. The agent account's full-access key should stay offline with the owner.
@@ -55,6 +59,14 @@ The agent's runtime only holds a function-call access key restricted to `vault.r
 | T31 | Someone initializes a freshly deployed contract and becomes its owner | `new` is `#[private]`: only the vault account itself can call it | design (generated entry point) |
 | T32 | A retired agent keeps limits, token limits or an attestation | `remove_agent` deletes them once nothing of the agent's is open | unit + sandbox |
 | T33 | The deployed contract isn't the published source | Reproducible Docker build; CI fails if the committed wasm differs; `scripts/reproducible-build.sh --account` compares with the code hash on chain | CI |
+| T34 | Invoice fraud: a forged email changes who to pay, to a vendor that is approved and under every limit | Under a task, the recipient must be owner-origin **and** one of the task's payees, checked by the contract (`recipient_from_untrusted_source`, `recipient_not_in_task`) | unit + runtime + sandbox + demo |
+| T35 | Invoice fraud: a forged or lookalike email changes the amount | Amounts from a source the task doesn't trust are held for the owner with the source and the content's sha256 (`amount_from_untrusted_source`); trusted sources need a DKIM signature aligned with From | unit + runtime + sandbox + demo |
+| T36 | A prompt injection fools the model that reads documents | The reader's output keeps its document's label whatever it says; it can't call tools or change the plan (CaMeL) | runtime + sandbox |
+| T37 | A document's text reaches the planner and steers the plan | The planner's input is only the owner's request and the on-chain task; documents appear as ids; the plan language has two operations and is validated before it runs | runtime |
+| T38 | Forged labels: an agent claims a document's value came from the owner | Labels are accepted only from an agent with a valid TDX attestation for an approved measurement, or one the owner vouches for; each payment records which (`label_trust`). Recipients are also checked against the task's payee list regardless of labels | unit + sandbox |
+| T39 | An email edited in transit, or sent from a lookalike domain, passes as the vendor | DKIM must verify and its domain must match From; otherwise `email:unverified`, which the contract won't let an owner trust. A lookalike domain is labelled as itself | runtime |
+| T40 | A task outlives its purpose or overspends | Per-task budget and per-payment cap (reservations count); end time; `close_task`; held payments can't be approved after the task closes; failed or declined payments return to the task budget | unit + sandbox |
+| T41 | Injected text appears in the agent's report to the owner | The origin runtime writes its summary from the trace, not with a model | runtime |
 
 ## Out of scope / known gaps
 - Payments that are made are public (amount, recipient, time); private mode does not hide them. No zero-knowledge proofs.
@@ -66,6 +78,9 @@ The agent's runtime only holds a function-call access key restricted to `vault.r
 - `reconcile_stuck` trusts the owner's reading of the explorer. Marking a token payment "not sent" when it was sent overcounts the vault's token balance; any payment or withdrawal that needs those missing tokens then fails at `ft_transfer` and is refunded, so nobody is overpaid, but the tracked balance stays too high and there is no method to correct it. Only mark a payment "not sent" after checking the explorer.
 - A request id reused after its record has been pruned is treated as a new payment. Retries happen within seconds and pruning only after `history_limit` newer payments, so this needs an agent that reuses old ids on purpose; paid-API quote ids are unique.
 - Metadata privacy: payments, memos and events are public on-chain.
+- Origin labels are as trustworthy as the TEE and the runtime code (or, for owner-vouched agents, the owner's own server). The contract still confines every task payment to the task's payees, budget and caps even if labels were forged.
+- The planner trusts the owner's request text. An owner who pastes an email into the request makes its text owner-origin; documents should be forwarded as documents.
+- DKIM proves which domain sent a message, not that the domain is honest. Only list a source on a task if you trust its owner; a compromised vendor mailbox on a trusted domain can still set an amount, within the task's caps.
 
 ## Security review (Phase 4)
 
@@ -84,6 +99,7 @@ figures were measured on a local NEAR node (nearcore 2.14) with
 | `ft_on_transfer` | token contracts the owner added | anything else is refunded |
 | `accept_ownership` | the proposed owner | exact match |
 | `deposit`, `expire_pending` | anyone | can only add funds / release overdue approvals |
+| `create_task`, `close_task`, `remove_task`, `set_label_vouch`, `set_origin_policy` | owner | `assert_owner()` (unit + sandbox tests) |
 | every other state-changing method | owner | `assert_owner()` (checked method by method; covered by unit tests for the sensitive ones) |
 
 The vault account's **full-access key** sits above all of this: whoever holds it
@@ -105,13 +121,15 @@ numbers, far from overflow.
 
 | Step | Reserved | Measured |
 |---|---|---|
-| `request_payment`, native | caller attaches (clients use 150 Tgas) | 4.0 Tgas |
-| `request_payment`, 100 open payments, nothing due | | 3.3 Tgas |
-| `request_payment` that expires 10 overdue approvals (worst case) | | 28.3 Tgas |
-| `on_payout` (native) | 10 Tgas | 2.8 Tgas |
+| `request_payment`, native | caller attaches (clients use 150 Tgas) | 4.1 Tgas |
+| `request_payment` with origin labels (task with 10 payees, 10 trusted sources) | | 4.8 Tgas |
+| `create_task`, largest allowed | caller attaches | 3.2 Tgas |
+| `request_payment`, 100 open payments, nothing due | | 3.4 Tgas |
+| `request_payment` that expires 10 overdue approvals (worst case) | | 29.0 Tgas |
+| `on_payout` (native) | 10 Tgas | 2.9 Tgas |
 | `on_recipient_checked` | 40 Tgas (includes `ft_transfer` 15 and `on_payout` 10) | 2.9 Tgas |
 | `on_payout` (token) | 10 Tgas | 3.1 Tgas |
-| `expire_pending` releasing 90 approvals | caller attaches | 57.4 Tgas |
+| `expire_pending` releasing 90 approvals | caller attaches | 58.6 Tgas |
 | `attest_agent` (Intel TDX verification) | caller attaches 300 Tgas | about 189 Tgas |
 
 Every callback has at least 3x headroom. If one still failed, the payment
@@ -125,9 +143,11 @@ The vault pays for its own storage, and the spendable balance always excludes
 the current storage cost and a 0.5 NEAR operating reserve, so agents can never
 spend the money that keeps the contract alive.
 
-- Code: the 713 KB wasm locks about 7.1 NEAR.
-- A payment record: 355 bytes with no memo (0.0036 NEAR), 1,035 bytes with the
-  largest encrypted memo (0.0104 NEAR).
+- Code: the 766 KB wasm locks about 7.7 NEAR.
+- A payment record: 358 bytes with no memo (0.0036 NEAR), 463 bytes with origin
+  labels, 1,038 bytes with the largest encrypted memo (0.0104 NEAR).
+- A task: up to 1,104 bytes (0.011 NEAR) at the largest allowed size; at most
+  100 tasks are stored, and closed ones can be removed to free the deposit.
 - History is capped: with the default `history_limit` of 1,000, records lock at
   most about 10 NEAR, and deleting old ones returns that deposit. The owner can
   set 100 to 10,000.

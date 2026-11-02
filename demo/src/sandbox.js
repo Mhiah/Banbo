@@ -5,7 +5,7 @@
 // Serves a small local API on http://localhost:3031 (localhost only):
 //   GET  /config           network + account ids for the dashboard
 //   POST /call             {method, args, gas?, deposit?} signed as the vault owner
-//   POST /scenario/:name   injection | failure | approval | usdc | paid_api | risk | private | routine
+//   POST /scenario/:name   invoice_fraud | injection | failure | approval | usdc | paid_api | risk | private | routine
 // It also runs the demo vendor's pay-per-call API on http://localhost:3032.
 // Signing keys never leave this process.
 import http from 'node:http';
@@ -13,6 +13,7 @@ import { setupVault } from './vault.js';
 import { startPaidApi } from './paid-api.js';
 import { actInjection, actFailedTransfer, actApproval, actUsdc, actPaidApi, actRiskRules, actPrivate, actRoutine, DEMO_PASSPHRASE, bold, cyan, dim } from './acts.js';
 import { hasCredentials } from './agent.js';
+import { actInvoiceFraud } from './act-origin.js';
 
 const PORT = Number(process.env.SANDBOX_API_PORT || 3031);
 const log = (...a) => console.log(...a);
@@ -48,6 +49,7 @@ const config = {
 
 let busy = false;
 const scenarios = {
+  invoice_fraud: () => actInvoiceFraud(env, { log, decline: false }),
   injection: () => actInjection(env, { log }),
   failure: () => actFailedTransfer(env, { log }),
   approval: () => actApproval(env, { log, approve: false }),
@@ -79,6 +81,7 @@ const OWNER_METHODS = new Set([
   'allow_hidden_recipient', 'disallow_hidden_recipient', 'set_privacy',
   'approve_tee_measurement', 'remove_tee_measurement', 'set_tee_ppids', 'set_tee_policy', 'revoke_attestation',
   'remove_agent', 'propose_owner', 'set_approval_ttl', 'set_history_limit', 'reconcile_stuck', 'expire_pending',
+  'create_task', 'close_task', 'remove_task', 'set_label_vouch', 'set_origin_policy',
 ]);
 
 const server = http.createServer(async (req, res) => {

@@ -39,6 +39,33 @@ try {
     out.total_token = T(total(r3.raw));
   }
 
+  // 3b. Origin-checked payment, worst case: a task with 10 payees and 10
+  //     trusted sources, amount labelled from the last trusted source.
+  {
+    await owner.call(vault, 'set_label_vouch', { agent: big.accountId, vouched: true });
+    const payees = [vendor.accountId];
+    for (let i = 1; i < 10; i++) payees.unshift(`payee-${i}.test.near`);
+    const sources = Array.from({ length: 10 }, (_, i) => `email:vendor-${i}.example`);
+    const st = await storage();
+    const ct = await owner.callRaw(vault, 'create_task', {
+      id: 'measure-task-' + 'x'.repeat(51), agent: big.accountId, description: 'd'.repeat(256), payees, token: null,
+      budget: N(5), max_per_payment: N(1), trusted_sources: sources, expires_at_ms: Date.now() + 86_400_000,
+    }, { gas: '300000000000000' });
+    out.create_task_max = T(total(ct.raw ?? ct));
+    out.storage_bytes_per_task_max = (await storage()) - st;
+    const origin = {
+      task_id: 'measure-task-' + 'x'.repeat(51),
+      recipient: { kind: 'owner' },
+      amount: { kind: 'source', source: sources[9], digest: 'ab'.repeat(32) },
+    };
+    const so = await storage();
+    const ro = await requestPayment(big, vault, { requestId: 'mo', recipient: vendor.accountId, amountNear: 0.001, memo: '', origin });
+    if (ro.outcome.outcome !== 'dispatched') throw new Error(JSON.stringify(ro.outcome));
+    out.request_payment_with_origin = T(receipts(ro.raw).filter((x) => x.exec === vault.accountId)[0].gas);
+    out.storage_bytes_per_request_with_origin = (await storage()) - so;
+    await owner.call(vault, 'close_task', { id: origin.task_id });
+  }
+
   // 4. Worst-case sweep: 99 open approvals that all expire, then one request
   //    releases SWEEP_LIMIT (10) of them while scanning the whole open set.
   await owner.call(vault, 'add_agent', { agent: big.accountId, per_tx_max: N(1), period_limit: N(30), approval_threshold: '0' });

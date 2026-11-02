@@ -6,6 +6,7 @@ import { Empty, Skeleton } from './ui';
 import Overview from './pages/Overview';
 import Agents from './pages/Agents';
 import Rules from './pages/Rules';
+import Tasks from './pages/Tasks';
 import Activity from './pages/Activity';
 import Privacy from './pages/Privacy';
 import Demo from './pages/Demo';
@@ -14,6 +15,7 @@ import Settings from './pages/Settings';
 const ROUTES = [
   { path: 'overview', label: 'Overview', el: Overview },
   { path: 'agents', label: 'Agents', el: Agents },
+  { path: 'tasks', label: 'Tasks', el: Tasks },
   { path: 'rules', label: 'Spending Rules', el: Rules },
   { path: 'activity', label: 'Activity', el: Activity },
   { path: 'privacy', label: 'Privacy', el: Privacy },
