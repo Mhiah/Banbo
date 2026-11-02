@@ -4,7 +4,21 @@
 
 Banbo is a wallet firewall for AI agents on NEAR. AI agents can pay for things from a shared treasury, but they never hold the treasury's keys. Every payment goes through a NEAR contract that enforces the owner's rules, even when the agent has been prompt-injected.
 
-**Banbo knows where every payment came from.** Limits and allowlists can't stop invoice fraud: a forged email that changes the amount, or redirects payment to another approved vendor, passes every limit. Banbo builds on **CaMeL** ([*Defeating Prompt Injections by Design*](https://arxiv.org/abs/2503.18813), Debenedetti et al., Google, Google DeepMind and ETH Zurich, 2025): a planner that never sees untrusted text, a quarantined reader, and a label on every value saying where it came from. Banbo enforces CaMeL's policy **in the vault contract**, and the contract believes the labels only from an agent whose Intel TDX attestation it has checked on-chain, or one the owner explicitly vouches for (each payment records which). Details: [docs/ORIGIN_CHECKS.md](docs/ORIGIN_CHECKS.md).
+**Banbo knows where every payment came from.** Limits and allowlists can't stop invoice fraud: a forged email that changes the amount, or redirects payment to another approved vendor, passes every limit. Banbo stops it by checking where each recipient and amount came from.
+
+### CaMeL is the idea. NEAR enforces it.
+
+**The idea is CaMeL** ([*Defeating Prompt Injections by Design*](https://arxiv.org/abs/2503.18813), Debenedetti et al., Google, Google DeepMind and ETH Zurich, 2025). An agent is split into a planner that never sees untrusted text and a quarantined reader that extracts data from emails and pages, and every value carries a label saying where it came from: the owner, or a specific email. In the paper, the agent's own software checks those labels. If that software is buggy, compromised or run by someone who skips the check, nothing stops the payment.
+
+**Banbo moves the check onto NEAR.** The agent only attaches the labels. The decision is made by a NEAR smart contract that holds the money:
+
+- **The contract holds the funds.** The agent never has the treasury's keys.
+- **The agent's key is a NEAR function-call access key** that can only call `request_payment`, so it can't move money any other way.
+- **The contract checks the labels itself.** A recipient taken from an email is refused. An amount from a sender the owner doesn't trust is held for the owner, with the sha256 of the exact email.
+- **The contract checks the agent's code.** It believes labels only from an agent whose Intel TDX attestation it has verified on-chain, or one the owner explicitly vouches for (each payment records which).
+- **Payments settle exactly once,** in NEAR or USDC (NEP-141), through NEAR's asynchronous callbacks.
+
+CaMeL defines the rule; the NEAR contract makes it impossible to skip. Details: [docs/ORIGIN_CHECKS.md](docs/ORIGIN_CHECKS.md).
 
 Built at NEAR HACKATHON (Nov 2026). Tracks: **AI Security & Defense**, Privacy & Private AI, Agent Economy, Open Innovation.
 
