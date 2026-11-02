@@ -1,0 +1,110 @@
+import { useEffect, useState, type FormEvent } from 'react';
+import { useBanbo } from '../state';
+import { FACTORY, NETWORKS, createVault, view, wallet, prettyError, type FactoryInfo, type WalletHandle } from '../near';
+import { Panel, PageHeader, Empty } from '../ui';
+import { near, toYocto } from '../format';
+
+const NAME = /^(?=.{2,32}$)[a-z\d]+([-_][a-z\d]+)*$/;
+const DAY_MS = 86_400_000;
+
+/** Create a vault from the browser: one wallet-signed transaction to the factory. */
+export default function CreateVault() {
+  const b = useBanbo();
+  const factory = FACTORY[b.network];
+  const [h, setH] = useState<WalletHandle | null>(null);
+  const [account, setAccount] = useState<string | null>(null);
+  const [info, setInfo] = useState<FactoryInfo | null>(null);
+  const [f, setF] = useState({ name: '', deposit: '3', cap: '1' });
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!factory) return;
+    let unsub: (() => void) | undefined;
+    wallet(b.network as 'testnet' | 'mainnet', factory).then((w) => {
+      setH(w);
+      const pick = () => {
+        const acc = w.selector.store.getState().accounts;
+        setAccount(acc.find((a) => a.active)?.accountId ?? acc[0]?.accountId ?? null);
+      };
+      pick();
+      unsub = w.selector.store.observable.subscribe(pick).unsubscribe;
+    }).catch((e) => setErr(`Wallet: ${prettyError(e)}`));
+    view<FactoryInfo>(NETWORKS[b.network].nodeUrl, factory, 'get_info').then(setInfo).catch((e) => setErr(`Couldn’t read the factory ${factory}: ${prettyError(e)}`));
+    return () => unsub?.();
+  }, [b.network, factory]);
+
+  if (!factory) {
+    return (
+      <>
+        <PageHeader title="Create a vault" />
+        <Empty title={b.network === 'sandbox' ? 'The local sandbox already has a vault' : 'Not available on this network yet'}>
+          <p className="muted">{b.network === 'sandbox' ? 'It is created when the sandbox starts.' : 'Vault creation from the browser is on NEAR Testnet for now.'}</p>
+        </Empty>
+      </>
+    );
+  }
+
+  const name = f.name.trim().toLowerCase();
+  const vaultId = name ? `${name}.${factory}` : `yourname.${factory}`;
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    try {
+      if (!h) throw new Error('The wallet isn’t ready yet.');
+      if (!account) { h.modal.show(); return; }
+      if (!NAME.test(name)) throw new Error('Name: 2–32 lowercase letters or digits, words joined by - or _.');
+      const deposit = toYocto(f.deposit);
+      if (info && BigInt(deposit) < BigInt(info.min_deposit)) throw new Error(`Start with at least ${near(info.min_deposit)} NEAR: the vault keeps 0.5 NEAR back for its storage and gas.`);
+      const cap = toYocto(f.cap);
+      if (BigInt(cap) === 0n) throw new Error('Set a daily limit above 0.');
+      setErr(''); setBusy(true);
+      const id = await createVault(h, factory, name, deposit, DAY_MS, cap);
+      b.setContract(id);
+      b.toast('ok', `Vault ${id} created`);
+      window.location.hash = '#/overview';
+    } catch (x) {
+      setErr(prettyError(x));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
+
+  return (
+    <>
+      <PageHeader title="Create a vault" subtitle="One transaction from your wallet. You own the vault; nobody else can change its rules or its code." />
+      <Panel title="New vault">
+        <form className="form" onSubmit={submit}>
+          <label className="field">
+            <span>Vault name</span>
+            <input value={f.name} onChange={set('name')} placeholder="acme-treasury" spellCheck={false} autoComplete="off" />
+            <small>Your vault will be <span className="mono">{vaultId}</span></small>
+          </label>
+          <div className="form-row two">
+            <label className="field">
+              <span>Starting balance (NEAR)</span>
+              <input value={f.deposit} onChange={set('deposit')} inputMode="decimal" />
+              <small>Moves from your wallet into the vault. 0.5 NEAR stays back for storage and gas.</small>
+            </label>
+            <label className="field">
+              <span>Daily limit for all agents (NEAR)</span>
+              <input value={f.cap} onChange={set('cap')} inputMode="decimal" />
+              <small>The most all your agents together can spend in a day. You can change it later.</small>
+            </label>
+          </div>
+          {err && <p className="form-err" role="alert">{err}</p>}
+          <div className="form-actions">
+            <button className="btn primary" disabled={busy || !h}>
+              {busy ? 'Waiting for confirmation…' : account ? `Create vault as ${account}` : 'Connect wallet to continue'}
+            </button>
+          </div>
+          <p className="muted xs">
+            Every vault runs the same published Banbo contract, identified on-chain by its code hash
+            {info ? <> <span className="mono">{info.vault_code_hash}</span></> : null}. Nobody, including the factory, can change a vault’s code later.
+            If creation fails, your deposit comes back.
+          </p>
+        </form>
+      </Panel>
+    </>
+  );
+}

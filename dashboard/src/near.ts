@@ -25,6 +25,11 @@ export const SANDBOX_API = import.meta.env.VITE_SANDBOX_API ?? 'http://localhost
 export const HOSTED = import.meta.env.VITE_HOSTED === '1';
 /** The vault a public build opens on testnet until the visitor picks another. */
 export const DEFAULT_VAULT: string = import.meta.env.VITE_DEFAULT_VAULT ?? '';
+/** The Banbo factory per network: creates vaults as `<name>.<factory>`. */
+export const FACTORY: Partial<Record<NetworkId, string>> = {
+  testnet: import.meta.env.VITE_FACTORY_TESTNET ?? 'banbo-vaults.testnet',
+  ...(import.meta.env.VITE_FACTORY_MAINNET ? { mainnet: import.meta.env.VITE_FACTORY_MAINNET as string } : {}),
+};
 /** Networks this build offers. */
 export const NETWORK_IDS: NetworkId[] = HOSTED ? ['testnet', 'mainnet'] : ['sandbox', 'testnet', 'mainnet'];
 
@@ -422,4 +427,26 @@ export function walletWriter(h: WalletHandle, contractId: string): Writer {
       return out.transaction?.hash;
     },
   };
+}
+
+export interface FactoryInfo { owner: string; vault_code_hash: string; vaults_created: number; min_deposit: string }
+
+/**
+ * Create a vault through the factory, signed by the connected wallet. Resolves
+ * to the new vault's account id once the chain confirms it; throws with the
+ * reason otherwise (the factory refunds the deposit when creation fails).
+ */
+export async function createVault(h: WalletHandle, factory: string, name: string, depositYocto: string, periodMs: number, sharedCapYocto: string): Promise<string> {
+  const w = await h.selector.wallet();
+  const out = await w.signAndSendTransaction({
+    receiverId: factory,
+    actions: [actionCreators.functionCall('create_vault', { name, period_ms: periodMs, shared_cap: sharedCapYocto }, 100_000_000_000_000n, BigInt(depositYocto))],
+  });
+  if (!out) throw new Error('The wallet didn’t return a result. Check your wallet’s activity, then reload.');
+  const status = out.status as { Failure?: unknown; SuccessValue?: string };
+  if (status && typeof status === 'object' && 'Failure' in status) throw new Error(prettyError(JSON.stringify(status.Failure)));
+  const value = status && typeof status === 'object' && typeof status.SuccessValue === 'string' ? atob(status.SuccessValue) : '';
+  const vault = value ? (JSON.parse(value) as string | null) : null;
+  if (!vault) throw new Error(`“${name}.${factory}” couldn’t be created (the name may be taken). Your deposit was refunded.`);
+  return vault;
 }

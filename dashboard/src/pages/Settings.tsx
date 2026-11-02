@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useBanbo } from '../state';
-import { NETWORKS, NETWORK_IDS, SANDBOX_API } from '../near';
+import { NETWORKS, NETWORK_IDS, SANDBOX_API, FACTORY } from '../near';
 import { Panel, PageHeader, Addr, Dialog, ChangeSummary } from '../ui';
 import { short } from '../format';
 
@@ -40,7 +40,7 @@ export default function Settings() {
             <label className="field">
               <span>Vault contract account</span>
               <input value={b.contractInput} onChange={(e) => b.setContract(e.target.value)} placeholder={b.network === 'mainnet' ? 'vault.yourname.near' : 'vault.yourname.testnet'} spellCheck={false} />
-              <small>The account the Banbo contract is deployed to.</small>
+              <small>The account the Banbo contract is deployed to.{FACTORY[b.network] && <> Don’t have one? <a href="#/new">Create a vault</a>.</>}</small>
             </label>
             {b.state && <p className="ok-text small">Connected. Owner: <Addr id={b.state.config.owner} explorer={b.explorer} full /></p>}
             {b.loadError && b.contractId && <p className="form-err">{b.loadError}</p>}

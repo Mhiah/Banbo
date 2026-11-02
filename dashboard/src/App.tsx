@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BanboProvider, useBanbo } from './state';
-import { NETWORKS, HOSTED } from './near';
+import { NETWORKS, HOSTED, FACTORY } from './near';
 import { short } from './format';
 import { Empty, Skeleton } from './ui';
 import Overview from './pages/Overview';
@@ -10,6 +10,7 @@ import Tasks from './pages/Tasks';
 import Activity from './pages/Activity';
 import Privacy from './pages/Privacy';
 import Demo from './pages/Demo';
+import CreateVault from './pages/CreateVault';
 import Settings from './pages/Settings';
 
 const ROUTES = [
@@ -22,6 +23,7 @@ const ROUTES = [
   { path: 'settings', label: 'Settings', el: Settings },
 ] as const;
 const DEMO = { path: 'demo', label: 'Demo', el: Demo };
+const CREATE = { path: 'new', label: 'Create a vault', el: CreateVault };
 
 function useRoute() {
   const read = () => window.location.hash.replace(/^#\/?/, '').split('?')[0] || 'overview';
@@ -48,10 +50,10 @@ function Shell() {
   const [navOpen, setNavOpen] = useState(false);
   useEffect(() => setNavOpen(false), [route]);
 
-  const all = HOSTED ? [...ROUTES] : [...ROUTES, DEMO];
+  const all = HOSTED ? [...ROUTES, CREATE] : [...ROUTES, CREATE, DEMO];
   const current = all.find((r) => r.path === route) ?? ROUTES[0];
   const Page = current.el;
-  const needsVault = current.path !== 'settings' && current.path !== 'demo';
+  const needsVault = current.path !== 'settings' && current.path !== 'demo' && current.path !== 'new';
 
   useEffect(() => { document.title = `${current.label} · Banbo`; }, [current.label]);
 
@@ -66,6 +68,7 @@ function Shell() {
         <div className="vault-ctx">
           <div className="ctx-label">Vault</div>
           <div className="ctx-value mono" title={b.contractId}>{b.contractId ? short(b.contractId) : 'Not selected'}</div>
+          {FACTORY[b.network] && <a className="link-btn xs" href="#/new">+ Create a vault</a>}
         </div>
         <nav>
           {ROUTES.map((r) => (
@@ -132,8 +135,11 @@ function VaultGate({ children }: { children: React.ReactNode }) {
   }
   if (b.network !== 'sandbox' && !b.contractId) {
     return (
-      <Empty title="Choose a vault" action={<a className="btn primary" href="#/settings">Open settings</a>}>
-        <p>Enter the account id of your Banbo vault on NEAR {NETWORKS[b.network].label}.</p>
+      <Empty title="Choose a vault" action={<div className="empty-actions">
+        {FACTORY[b.network] && <a className="btn primary" href="#/new">Create a vault</a>}
+        <a className={`btn ${FACTORY[b.network] ? '' : 'primary'}`} href="#/settings">Open an existing vault</a>
+      </div>}>
+        <p>Create a new Banbo vault with your wallet, or enter the account id of one you already have on NEAR {NETWORKS[b.network].label}.</p>
       </Empty>
     );
   }

@@ -394,6 +394,18 @@ OWNER=you.testnet VAULT=vault.you.testnet AGENT=agent.you.testnet VENDOR=vendor.
   ./scripts/deploy-testnet.sh
 ```
 
+### Vaults from the browser: the factory
+
+`contract/factory` creates a vault in one wallet-signed transaction: `create_vault("acme", …)` makes `acme.<factory>`, funds it, points it at the Banbo contract **by code hash** (a [NEAR global contract](https://docs.near.org/smart-contracts/global-contracts)) and initializes it with the caller as owner, all in one receipt. If anything fails, the account isn't created and the deposit is refunded. Every vault runs exactly the published code, and nobody, including the factory's owner, can change an existing vault's code; the factory's owner can only point *future* vaults at a newer version. The dashboard's **Create a vault** page calls it.
+
+Publishing the code is done once per network and burns 10x normal storage (about 77 NEAR for `banbo.wasm`, test NEAR on testnet):
+
+```bash
+OWNER=you.testnet FACTORY=banbo-vaults.testnet ./scripts/deploy-factory-testnet.sh
+```
+
+`scripts/reproducible-build.sh --account <vault>` checks a factory vault too: it compares against the global code hash the vault uses.
+
 ## Troubleshooting
 
 - **The sandbox fails with "couldn't set the file descriptor limit"**: run `ulimit -n 65535` first. In containers where the hard limit is lower, the node can't start.
