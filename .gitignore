@@ -6,3 +6,4 @@ demo/out/
 .near-credentials/
 dashboard/dist/
 contract/mock-ft/target/
+contract/factory/target/

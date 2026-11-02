@@ -51,7 +51,7 @@ fn callback(ok: bool, ts_ms: u64) {
 /// Agent may pay up to 1 NEAR each, 10 a day; above 0.5 NEAR needs approval.
 fn setup() -> Banbo {
     ctx(owner(), T0);
-    let mut c = Banbo::new(owner(), DAY_MS, U128(50 * NEAR));
+    let mut c = crate::init_for_test(owner(), DAY_MS, U128(50 * NEAR));
     c.add_agent(agent(), U128(NEAR), U128(10 * NEAR), U128(NEAR / 2));
     c.allow_recipient(vendor());
     c
@@ -469,4 +469,24 @@ fn open_payments_are_capped() {
     );
     settle(&mut c, "p0", T0 + 1);
     assert!(matches!(pay(&mut c, "one-more", 1, T0 + 2), RequestOutcome::Dispatched { .. }));
+}
+
+fn init_as(me: &str, caller: &str) -> bool {
+    let c = VMContextBuilder::new()
+        .current_account_id(me.parse().unwrap())
+        .predecessor_account_id(caller.parse().unwrap())
+        .build();
+    testing_env!(c);
+    std::panic::catch_unwind(|| Banbo::new(owner(), DAY_MS, U128(NEAR))).is_ok()
+}
+
+#[test]
+fn only_the_vault_or_the_account_that_created_it_can_initialize() {
+    assert!(init_as("vault.testnet", "vault.testnet"), "the vault itself");
+    assert!(init_as("acme.banbo-factory.testnet", "banbo-factory.testnet"), "its parent, e.g. the factory");
+    assert!(!init_as("acme.banbo-factory.testnet", "attacker.testnet"), "a stranger");
+    assert!(!init_as("acme.banbo-factory.testnet", "testnet"), "a grandparent");
+    assert!(!init_as("acme.banbo-factory.testnet", "x.acme.banbo-factory.testnet"), "a sub-account");
+    assert!(!init_as("acme.banbo-factory.testnet", "evilbanbo-factory.testnet") , "a look-alike name");
+    assert!(!init_as("acme.banbo-factory.testnet", "factory.testnet"), "a name that is only a suffix");
 }

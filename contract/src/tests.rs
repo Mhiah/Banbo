@@ -47,7 +47,7 @@ fn callback_ctx(ok: bool, balance_near: u128, ts_ms: u64) {
 /// for agent3 (others never need approval at their max).
 fn setup() -> Banbo {
     ctx(owner(), 10, 1_000);
-    let mut c = Banbo::new(owner(), DAY_MS, U128(5 * NEAR));
+    let mut c = crate::init_for_test(owner(), DAY_MS, U128(5 * NEAR));
     for n in 1..=3 {
         let threshold = if n == 3 { 4 * NEAR / 10 } else { NEAR };
         c.add_agent(agent(n), U128(NEAR / 2), U128(3 * NEAR), U128(threshold));
@@ -338,7 +338,7 @@ fn pause_and_disable_stop_new_payments() {
 fn vault_balance_is_respected() {
     // Vault holds only 1 NEAR, 0.5 of which is the operating reserve.
     ctx(owner(), 1, 1_000);
-    let mut c = Banbo::new(owner(), DAY_MS, U128(5 * NEAR));
+    let mut c = crate::init_for_test(owner(), DAY_MS, U128(5 * NEAR));
     c.add_agent(agent(1), U128(NEAR), U128(3 * NEAR), U128(NEAR));
     c.allow_recipient(vendor());
     ctx(agent(1), 1, 2_000);

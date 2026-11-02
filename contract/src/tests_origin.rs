@@ -106,7 +106,7 @@ fn from(source: &str, content: &str) -> Origin {
 /// DKIM-verified mail from acme.com.
 fn setup() -> (Banbo, String) {
     ctx(owner(), T0);
-    let mut c = Banbo::new(owner(), DAY_MS, U128(50 * NEAR));
+    let mut c = crate::init_for_test(owner(), DAY_MS, U128(50 * NEAR));
     c.add_agent(agent(), U128(2 * NEAR), U128(20 * NEAR), U128(NEAR));
     c.add_agent(other_agent(), U128(2 * NEAR), U128(20 * NEAR), U128(NEAR));
     c.allow_recipient(acme());
@@ -415,7 +415,7 @@ fn require_origin_refuses_unlabelled_payments() {
 #[test]
 fn require_origin_needs_an_approved_measurement() {
     ctx(owner(), T0);
-    let mut c = Banbo::new(owner(), DAY_MS, U128(50 * NEAR));
+    let mut c = crate::init_for_test(owner(), DAY_MS, U128(50 * NEAR));
     let msg = panics(|| c.set_origin_policy(true));
     assert!(msg.contains("approve a TEE measurement or vouch"), "{msg}");
 }
@@ -462,7 +462,7 @@ fn vouching_is_owner_only_and_ends_with_the_agent() {
     c.remove_agent(other_agent());
     assert!(c.list_vouched().is_empty());
     // A vouched agent is enough to turn on require_origin.
-    let mut fresh = Banbo::new(owner(), DAY_MS, U128(50 * NEAR));
+    let mut fresh = crate::init_for_test(owner(), DAY_MS, U128(50 * NEAR));
     fresh.add_agent(agent(), U128(NEAR), U128(NEAR), U128(NEAR));
     fresh.set_label_vouch(agent(), true);
     fresh.set_origin_policy(true);

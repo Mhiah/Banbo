@@ -48,7 +48,7 @@ fn enc(n: usize) -> String {
 /// Vault with one ordinary agent and one TEE agent, nothing allowlisted.
 fn setup() -> Banbo {
     ctx(owner(), 1_000);
-    let mut c = Banbo::new(owner(), DAY_MS, U128(5 * NEAR));
+    let mut c = crate::init_for_test(owner(), DAY_MS, U128(5 * NEAR));
     c.add_agent(agent(), U128(NEAR / 2), U128(3 * NEAR), U128(NEAR / 4));
     c.add_agent(tee_agent(), U128(NEAR / 2), U128(3 * NEAR), U128(NEAR));
     c

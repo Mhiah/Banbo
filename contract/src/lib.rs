@@ -563,11 +563,18 @@ fn limits_key(agent: &AccountId, token: &AccountId) -> String {
 
 #[near]
 impl Banbo {
-    /// `#[private]`: only the vault account itself can initialize it, so
-    /// nobody can front-run a deploy and make themselves the owner.
+    /// Only the vault account itself, or the account directly above it
+    /// (the one that created it, e.g. the Banbo factory for
+    /// `name.factory.near`), can initialize it, so nobody can front-run a
+    /// deploy and make themselves the owner.
     #[init]
-    #[private]
     pub fn new(owner: AccountId, period_ms: u64, shared_cap: U128) -> Self {
+        let me = env::current_account_id();
+        let caller = env::predecessor_account_id();
+        require!(
+            caller == me || me.as_str().strip_suffix(caller.as_str()).is_some_and(|name| name.ends_with('.') && !name[..name.len() - 1].contains('.')),
+            "only the vault account or the account that created it can initialize it"
+        );
         require!(period_ms > 0, "period_ms must be > 0");
         Self {
             owner,
@@ -2259,6 +2266,23 @@ impl Banbo {
         self.put_pool(&req.token, p);
         self.task_done(req, false);
     }
+}
+
+/// Unit tests: initialize as the vault account itself (as a deploy with an
+/// init call does), then put the caller and the rest of the context back.
+#[cfg(test)]
+pub(crate) fn init_for_test(owner: AccountId, period_ms: u64, shared_cap: U128) -> Banbo {
+    use near_sdk::test_utils::VMContextBuilder;
+    let (me, caller, balance, ts) =
+        (env::current_account_id(), env::predecessor_account_id(), env::account_balance(), env::block_timestamp());
+    let ctx = |pred: AccountId| {
+        VMContextBuilder::new().current_account_id(me.clone()).predecessor_account_id(pred)
+            .account_balance(balance).block_timestamp(ts).build()
+    };
+    near_sdk::testing_env!(ctx(me.clone()));
+    let c = Banbo::new(owner, period_ms, shared_cap);
+    near_sdk::testing_env!(ctx(caller));
+    c
 }
 
 #[cfg(test)]

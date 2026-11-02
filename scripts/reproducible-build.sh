@@ -5,6 +5,7 @@
 #   scripts/reproducible-build.sh --check    build, fail if it differs from the committed wasm
 #   scripts/reproducible-build.sh --account banbo.near [--network mainnet]
 #                                            build, compare with the code deployed on that account
+#                                            (or the global contract hash it uses, for factory vaults)
 #
 # NEAR's code hash is base58(sha256(wasm)), the same value explorers show.
 set -euo pipefail
@@ -61,7 +62,7 @@ case "$MODE" in
     RPC="https://rpc.$NETWORK.near.org"
     ONCHAIN="$(curl -fsS "$RPC" -H 'content-type: application/json' \
       -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"query\",\"params\":{\"request_type\":\"view_account\",\"finality\":\"final\",\"account_id\":\"$ACCOUNT\"}}" \
-      | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>console.log(JSON.parse(d).result.code_hash))')"
+      | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const r=JSON.parse(d).result;console.log(r.global_contract_hash||r.code_hash)})')"
     echo "on-chain:  $ONCHAIN ($ACCOUNT on $NETWORK)"
     if [ "$ONCHAIN" != "$(b58 "$HEX")" ]; then echo "MISMATCH" >&2; exit 1; fi
     echo "OK: $ACCOUNT runs exactly this source" ;;
