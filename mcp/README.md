@@ -73,7 +73,7 @@ For Claude Code: `claude mcp add banbo --env BANBO_VAULT=… --env BANBO_AGENT_A
 | `BANBO_CREDENTIALS_FILE` | a near-cli credentials JSON holding the function-call key (`private_key`) |
 | `BANBO_AGENT_KEY` | or the key itself, `ed25519:…` |
 | `BANBO_NETWORK` | `testnet` (default) or `mainnet` |
-| `BANBO_RPC` | RPC URL; defaults to FastNEAR for the network |
+| `BANBO_RPC` | RPC URL, or several separated by commas (the first that answers is used). Defaults to public FastNEAR and NEAR nodes for the network |
 | `BANBO_RECIPIENT_SALTS` | JSON `{"vendor.near": "<salt>"}` for [hidden vendors](../docs/PRIVACY.md); comes from your config, never from the model |
 | `BANBO_ALLOW_FULL_ACCESS_KEY` | `1` accepts a full-access key. Local testing only. |
 
