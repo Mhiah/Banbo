@@ -42,14 +42,14 @@ const SECTIONS: Section[] = [
     body: <>
       <h3>1. Connect your wallet</h3>
       <p>Click <strong>Connect wallet</strong> at the top right and pick a NEAR wallet. Meteor Wallet works well on testnet; make sure the wallet is set to the same network as the dashboard (shown next to the button).</p>
-      <h3>2. Create a vault, or open yours</h3>
-      <p><strong>Create a vault</strong> (in the sidebar, under the vault name) makes a new vault owned by your wallet, in one transaction.</p>
+      <h3>2. Your vault</h3>
+      <p>If your wallet already owns a vault, it opens by itself. If not, the Overview offers <strong>Create a vault</strong>, which makes a new vault owned by your wallet in one transaction.</p>
       <Fields rows={[
         ['Vault name', 'Lowercase letters or digits, 2–32 characters. Your vault becomes name.factory account.'],
         ['Starting balance', 'NEAR moved from your wallet into the vault. A small part stays back for the vault’s storage and gas.'],
         ['Daily limit for all agents', 'The most all your agents together can spend in one day. You can change it later in Spending Rules.'],
       ]} />
-      <p>Already have a vault? Open <strong>Settings</strong> and enter its account.</p>
+      <p>If your vault has a different name and doesn’t open by itself, enter its account once in <strong>Settings</strong>; it is remembered for your wallet.</p>
       <h3>3. Next steps</h3>
       <p>Add the companies your agents may pay (<strong>Spending Rules → Allowed recipients</strong>), then connect an agent.</p>
     </>,

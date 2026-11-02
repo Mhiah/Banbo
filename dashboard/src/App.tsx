@@ -148,12 +148,10 @@ function VaultGate({ children }: { children: React.ReactNode }) {
     );
   }
   if (b.network !== 'sandbox' && !b.contractId) {
+    if (b.finding) return <Skeleton rows={6} />;
     return (
-      <Empty title="Choose a vault" action={<div className="empty-actions">
-        {FACTORY[b.network] && <a className="btn primary" href="#/new">Create a vault</a>}
-        <a className={`btn ${FACTORY[b.network] ? '' : 'primary'}`} href="#/settings">Open an existing vault</a>
-      </div>}>
-        <p>Create a new Banbo vault with your wallet, or enter the account id of one you already have on NEAR {NETWORKS[b.network].label}.</p>
+      <Empty title="You don’t have a vault yet" action={FACTORY[b.network] ? <a className="btn primary" href="#/new">Create a vault</a> : undefined}>
+        <p>{FACTORY[b.network] ? 'Create one with your wallet to get started.' : `Vault creation isn’t available on NEAR ${NETWORKS[b.network].label} yet.`}</p>
       </Empty>
     );
   }
@@ -180,7 +178,7 @@ function WalletBox() {
   }
   return (
     <div className="wallet">
-      <span className="mono" title={b.writer.accountId}>{short(b.writer.accountId)}</span>
+      <span className="mono wallet-id" title={b.writer.accountId}>{short(b.writer.accountId)}</span>
       <button className="link-btn xs" onClick={async () => (await b.handle!.selector.wallet()).signOut()}>Sign out</button>
     </div>
   );

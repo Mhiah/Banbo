@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   NETWORKS, NETWORK_IDS, FACTORY, type NetworkId, type VaultState, type Writer, type SandboxConfig, type WalletHandle,
-  loadVault, sandboxConfig, sandboxWriter, wallet, walletWriter, prettyError, signUnlock,
+  loadVault, view, sandboxConfig, sandboxWriter, wallet, walletWriter, prettyError, signUnlock,
 } from './near';
 import { keyPairFromPassphrase, keyPairFromSignature, unlockMessage, unlockNonce, type OwnerKeys } from './privacy';
 
@@ -29,6 +29,25 @@ function linkedVault(): string {
   return cleanAccountId(new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('vault') ?? '');
 }
 
+/** Where this account's vault would be: the deploy script's vault.<account>, or <name>.<factory>. */
+function vaultCandidates(n: NetworkId, account: string): string[] {
+  const out = [`vault.${account}`];
+  const f = FACTORY[n];
+  const base = account.split('.')[0];
+  if (f && base) out.push(`${base}.${f}`);
+  return out;
+}
+/** The first candidate vault this account owns, or '' if none. */
+async function findOwnVault(n: NetworkId, account: string): Promise<string> {
+  for (const id of vaultCandidates(n, account)) {
+    try {
+      const cfg = await view<{ owner: string }>(NETWORKS[n].nodeUrl, id, 'get_config');
+      if (cfg.owner === account) return id;
+    } catch { /* no such vault */ }
+  }
+  return '';
+}
+
 function useBanboState() {
   const [network, setNetworkRaw] = useState<NetworkId>(startNetwork);
   const [contractInput, setContractInput] = useState(linkedVault);
@@ -43,6 +62,8 @@ function useBanboState() {
   const [now, setNow] = useState(Date.now());
   // Private-mode key: memory only, gone on reload or vault switch.
   const [keys, setKeys] = useState<OwnerKeys | null>(null);
+  // Looking up the connected account's vault.
+  const [finding, setFinding] = useState(false);
 
   const nodeUrl = network === 'sandbox' ? sandbox?.nodeUrl ?? '' : NETWORKS[network].nodeUrl;
   const contractId = network === 'sandbox' ? sandbox?.contractId ?? '' : cleanAccountId(contractInput);
@@ -76,7 +97,17 @@ function useBanboState() {
   useEffect(() => {
     if (network === 'sandbox') return;
     if (firstAccount.current) { firstAccount.current = false; if (linkedVault() && !account) return; }
-    setContractInput(linkedVault() || savedContract(network, account));
+    const known = linkedVault() || savedContract(network, account);
+    setContractInput(known);
+    if (known || !account) { setFinding(false); return; }
+    let live = true;
+    setFinding(true);
+    findOwnVault(network, account).then((id) => {
+      if (!live) return;
+      setFinding(false);
+      if (id) { setContractInput(id); ls.set(`contract:${network}:${account}`, id); }
+    });
+    return () => { live = false; };
   }, [account, network]);
 
   useEffect(() => setKeys(null), [network, contractId]);
@@ -191,7 +222,7 @@ function useBanboState() {
   }, [writer, refresh, toast]);
 
   return {
-    network, setNetwork, contractInput, setContract, contractId, nodeUrl, explorer,
+    network, setNetwork, contractInput, setContract, contractId, nodeUrl, explorer, finding,
     sandbox, sandboxDown, handle, writer, state, loadError, toasts, toast, busy, setBusy, now,
     isOwner, refresh, act,
     keys, setKeys, deriveWithWallet, deriveWithPassphrase,
