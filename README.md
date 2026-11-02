@@ -144,6 +144,10 @@ Act 1 of the demo runs the Acme scenario as real transactions on a local NEAR no
 
 ## Try it
 
+**Live on NEAR testnet:** the owner dashboard is at **[mhiah.github.io/Banbo](https://mhiah.github.io/Banbo/)**. It opens on the public demo vault `vault.banbo-mia.testnet` and reads everything from the chain; anyone can look, only the owner's wallet can change anything.
+
+To run everything locally:
+
 ```bash
 make setup   # installs everything, including a local NEAR node (no testnet account needed)
 make demo    # the eight-act demo below, as real transactions
