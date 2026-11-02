@@ -39,7 +39,6 @@ export default function Rules() {
   return (
     <>
       <PageHeader title="Spending Rules" subtitle="You decide what each agent can spend and where it can send funds. The contract enforces these rules on every payment." />
-      {!owner && <div className="alert">You’re viewing these rules read-only. Only the vault owner ({short(s.config.owner)}) can change them.</div>}
 
       <Panel title="Shared daily limit" action={owner && <button className="btn" onClick={() => setEditCap('NEAR')}>Change</button>}>
         <div className="rule-row">

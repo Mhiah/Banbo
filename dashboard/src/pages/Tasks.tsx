@@ -38,7 +38,6 @@ export default function Tasks() {
         subtitle="A task mandate gives an agent one job: who it may pay, how much, until when, and which senders may set an amount. The vault pays only the payees you set, and holds any amount that came from a source you don’t trust."
         action={owner && <button className="btn primary" onClick={() => setCreating(true)}>New mandate</button>}
       />
-      {!owner && <div className="alert">You’re viewing mandates read-only. Only the vault owner ({short(s.config.owner)}) can create or close them.</div>}
 
       <Panel title="How origin checks work">
         <p className="small">

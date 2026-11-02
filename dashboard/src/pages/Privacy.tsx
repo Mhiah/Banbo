@@ -26,7 +26,6 @@ export default function Privacy() {
   return (
     <>
       <PageHeader title="Privacy" subtitle="Keep your vendor list and payment notes to yourself, and only let agents spend when they run in a verified TEE." />
-      {!owner && <div className="alert">You’re viewing these settings read-only. Only the vault owner ({short(c.owner)}) can change them.</div>}
 
       <UnlockPanel keyMatches={keyMatches} />
 
