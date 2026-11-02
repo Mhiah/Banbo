@@ -8,8 +8,8 @@ export type NetworkId = 'sandbox' | 'testnet' | 'mainnet';
 
 export const NETWORKS: Record<NetworkId, { label: string; nodeUrl: string; explorer?: string }> = {
   sandbox: { label: 'Local sandbox', nodeUrl: '' },
-  testnet: { label: 'Testnet', nodeUrl: 'https://rpc.testnet.near.org', explorer: 'https://testnet.nearblocks.io' },
-  mainnet: { label: 'Mainnet', nodeUrl: 'https://rpc.mainnet.near.org', explorer: 'https://nearblocks.io' },
+  testnet: { label: 'Testnet', nodeUrl: 'https://rpc.testnet.fastnear.com', explorer: 'https://testnet.nearblocks.io' },
+  mainnet: { label: 'Mainnet', nodeUrl: 'https://rpc.mainnet.fastnear.com', explorer: 'https://nearblocks.io' },
 };
 
 export const SANDBOX_API = import.meta.env.VITE_SANDBOX_API ?? 'http://localhost:3031';

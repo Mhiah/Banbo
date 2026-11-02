@@ -73,7 +73,7 @@ fn pay_as(
     memo: Option<String>,
 ) -> RequestOutcome {
     ctx(who, 2_000);
-    c.request_payment(id.into(), to, U128(amount), memo, None, salt.map(String::from))
+    c.request_payment(id.into(), to, U128(amount), memo, None, salt.map(String::from), None)
 }
 
 fn rejected(r: &str) -> RequestOutcome {
@@ -148,7 +148,7 @@ fn hidden_recipients_respect_the_cooldown() {
     assert_eq!(c.list_hidden_recipients()[0].payable_from_ms, 1_000 + DAY_MS);
     assert_eq!(pay_as(&mut c, agent(), "c1", secret_vendor(), NEAR / 10, Some(SALT), None), rejected("recipient_in_cooldown"));
     ctx(agent(), 1_000 + DAY_MS);
-    let out = c.request_payment("c2".into(), secret_vendor(), U128(NEAR / 10), None, None, Some(SALT.into()));
+    let out = c.request_payment("c2".into(), secret_vendor(), U128(NEAR / 10), None, None, Some(SALT.into()), None);
     assert!(matches!(out, RequestOutcome::Dispatched { .. }), "{out:?}");
 }
 
@@ -506,7 +506,7 @@ fn attestation_expires() {
     let (mut c, id) = tee_setup();
     attest_now(&mut c, &tee_agent(), &id, 1_000);
     ctx(tee_agent(), 1_000 + DAY_MS);
-    let out = c.request_payment("e1".into(), secret_vendor(), U128(NEAR / 10), None, None, None);
+    let out = c.request_payment("e1".into(), secret_vendor(), U128(NEAR / 10), None, None, None, None);
     assert_eq!(out, rejected("attestation_expired"));
 }
 

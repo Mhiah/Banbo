@@ -17,6 +17,7 @@
     "@noble/hashes": "1.8.0",
     "@phala/dcap-qvl": "0.7.0",
     "@phala/dstack-sdk": "0.5.8",
+    "mailauth": "7.3.0",
     "near-api-js": "5.1.1",
     "tweetnacl": "1.0.3"
   }
