@@ -17,7 +17,7 @@ const useLlm = hasCredentials() && !process.argv.includes('--scripted');
 const log = (...a) => console.log(...a);
 
 async function main() {
-  log(bold('\nBanbo: the wallet firewall for AI agents on NEAR\n'));
+  log(bold('\nBanbo: the security layer for AI agent wallets, on NEAR\n'));
   log(dim('Starting a local NEAR node and deploying the vault...'));
   const env = await setupVault();
   const { worker, vault } = env;
