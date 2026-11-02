@@ -8,9 +8,17 @@ export type NetworkId = 'sandbox' | 'testnet' | 'mainnet';
 
 export const NETWORKS: Record<NetworkId, { label: string; nodeUrl: string; explorer?: string }> = {
   sandbox: { label: 'Local sandbox', nodeUrl: '' },
-  testnet: { label: 'Testnet', nodeUrl: 'https://rpc.testnet.fastnear.com', explorer: 'https://testnet.nearblocks.io' },
+  testnet: { label: 'Testnet', nodeUrl: 'https://archival-rpc.testnet.fastnear.com', explorer: 'https://testnet.nearblocks.io' },
   mainnet: { label: 'Mainnet', nodeUrl: 'https://rpc.mainnet.fastnear.com', explorer: 'https://nearblocks.io' },
 };
+
+/** Other public RPC nodes to try, in order, when a network's node can't be reached. */
+const FALLBACKS: Record<string, string[]> = {
+  [NETWORKS.testnet.nodeUrl]: ['https://test.rpc.fastnear.com', 'https://rpc.testnet.near.org'],
+  [NETWORKS.mainnet.nodeUrl]: ['https://free.rpc.fastnear.com', 'https://rpc.mainnet.near.org'],
+};
+/** The node that last answered, per network, so we don't retry a dead one on every read. */
+const working = new Map<string, string>();
 
 export const SANDBOX_API = import.meta.env.VITE_SANDBOX_API ?? 'http://localhost:3031';
 
@@ -212,13 +220,31 @@ export function assetOf(state: Pick<VaultState, 'tokens'>, token: string | null 
 // ------------------------------------------------------------------- reads
 
 let rpcId = 0;
-async function rpc<T>(nodeUrl: string, method: string, params: unknown): Promise<T> {
-  const res = await fetch(nodeUrl, {
+async function rpcPost(url: string, method: string, params: unknown) {
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method, params }),
   });
-  const body = await res.json();
+  if (!res.ok) throw new Error(`RPC ${url} answered ${res.status}`);
+  return res.json();
+}
+
+async function rpc<T>(nodeUrl: string, method: string, params: unknown): Promise<T> {
+  const first = working.get(nodeUrl) ?? nodeUrl;
+  const urls = [first, ...[nodeUrl, ...(FALLBACKS[nodeUrl] ?? [])].filter((u) => u !== first)];
+  let body: { error?: { data?: string; message?: string }; result?: { error?: string } } | undefined;
+  let lastErr: unknown;
+  for (const url of urls) {
+    try {
+      body = await rpcPost(url, method, params);
+      working.set(nodeUrl, url);
+      break;
+    } catch (e) {
+      lastErr = e; // unreachable, blocked or rate-limited: try the next node
+    }
+  }
+  if (!body) throw new Error(`Couldn’t reach a NEAR RPC node (${lastErr instanceof Error ? lastErr.message : String(lastErr)})`);
   if (body.error) throw new Error(body.error.data ?? body.error.message ?? 'RPC error');
   if (body.result?.error) throw new Error(body.result.error);
   return body.result as T;
