@@ -182,6 +182,7 @@ function NewTask({ open, onClose }: { open: boolean; onClose: () => void }) {
       const bad = payees.find((p) => !ACCOUNT.test(p));
       if (bad) throw new Error(`“${bad}” isn’t a NEAR account id.`);
       const notAllowed = payees.filter((p) => !s.allowlist.includes(p));
+      if (notAllowed.length) throw new Error(`Not on your allowlist: ${notAllowed.join(', ')}. Payees must be accounts you already allow in Spending Rules.`);
       const sources = list(f.sources.toLowerCase());
       const badSrc = sources.find((x) => !SOURCE.test(x) || x.endsWith(':unverified'));
       if (badSrc) throw new Error(`“${badSrc}” isn’t a source like email:acme.com or web:portal.acme.com.`);
@@ -196,10 +197,7 @@ function NewTask({ open, onClose }: { open: boolean; onClose: () => void }) {
         id, agent: f.agent, description: f.description.trim(), payees, token: f.asset || null,
         budget, max_per_payment: max, trusted_sources: sources, expires_at_ms: Date.now() + Math.round(days * 86_400_000),
       });
-      if (ok) {
-        if (notAllowed.length) b.toast('err', `Not on the allowlist yet: ${notAllowed.join(', ')}. Add them in Spending Rules before the mandate can pay them.`);
-        close();
-      }
+      if (ok) close();
     } catch (x) { setErr((x as Error).message); }
   };
   const field = (k: keyof typeof f, label: string, hint?: string, ph = '') => (
@@ -224,7 +222,7 @@ function NewTask({ open, onClose }: { open: boolean; onClose: () => void }) {
           </select>
         </label>
         {field('description', 'What the job is', 'Shown to the agent’s planner. Write it yourself; don’t paste emails here.', 'Pay Acme’s October support invoice')}
-        {field('payees', 'Who it may pay', 'NEAR accounts, separated by commas. They must also be on your allowlist.', 'acme.near')}
+        {field('payees', 'Who it may pay', `NEAR accounts, separated by commas, from your allowlist${s.allowlist.length ? `: ${s.allowlist.join(', ')}` : ' (add them in Spending Rules first)'}.`, s.allowlist[0] ?? 'acme.near')}
         <div className="form-row">
           <label className="field">
             <span>Asset</span>
