@@ -78,6 +78,7 @@ const OWNER_METHODS = new Set([
   'add_token', 'set_agent_token_limits', 'withdraw_token', 'set_risk_rules',
   'allow_hidden_recipient', 'disallow_hidden_recipient', 'set_privacy',
   'approve_tee_measurement', 'remove_tee_measurement', 'set_tee_ppids', 'set_tee_policy', 'revoke_attestation',
+  'remove_agent', 'propose_owner', 'set_approval_ttl', 'set_history_limit', 'reconcile_stuck', 'expire_pending',
 ]);
 
 const server = http.createServer(async (req, res) => {

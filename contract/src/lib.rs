@@ -57,6 +57,25 @@ const ENC_PREFIX: &str = "enc1:";
 const KEY_PREFIX: &str = "x25519:";
 /// Default lifetime of an agent's TEE attestation.
 const DEFAULT_ATTESTATION_TTL_MS: u64 = 7 * 24 * 3_600_000;
+/// Pending approvals expire after this long by default.
+const DEFAULT_APPROVAL_TTL_MS: u64 = 3 * 24 * 3_600_000;
+const MIN_APPROVAL_TTL_MS: u64 = 60_000;
+const MAX_APPROVAL_TTL_MS: u64 = 30 * 24 * 3_600_000;
+/// Payments waiting for approval or for their transfer result, at most.
+/// Bounds the work an expiry sweep can do and the budget an agent can park.
+const MAX_OPEN: u32 = 100;
+/// Expired approvals released per sweep.
+const SWEEP_LIMIT: u32 = 10;
+/// A transfer's result normally arrives within a few blocks. After this long
+/// without one, the owner may reconcile the payment by hand.
+const IN_FLIGHT_RECOVERY_MS: u64 = 30 * 60_000;
+/// Payment records kept by default; older finished ones are deleted, which
+/// returns their storage deposit to the vault.
+const DEFAULT_HISTORY_LIMIT: u32 = 1_000;
+const MIN_HISTORY_LIMIT: u32 = 100;
+const MAX_HISTORY_LIMIT: u32 = 10_000;
+/// Old records deleted per new payment, so a lowered limit catches up.
+const PRUNE_PER_INSERT: u32 = 3;
 const MAX_REQUEST_ID_LEN: usize = 64;
 /// Blocked attempts kept on-chain for the dashboard (oldest overwritten).
 const BLOCKED_LOG_SIZE: u32 = 50;
@@ -68,7 +87,6 @@ enum StorageKey {
     Agents,
     Allowlist,
     Requests,
-    RequestOrder,
     Blocked,
     Tokens,
     TokenLimits,
@@ -78,6 +96,8 @@ enum StorageKey {
     TeeMeasurements,
     TeePpids,
     Tee,
+    History,
+    Open,
 }
 
 /// A hidden allowlist entry. Only the fingerprint
@@ -219,6 +239,14 @@ pub enum Status {
     Failed,
     /// Owner declined a pending request; reservation released.
     Declined,
+    /// Nobody approved it in time; reservation released.
+    Expired,
+}
+
+impl Status {
+    fn is_final(&self) -> bool {
+        !matches!(self, Status::PendingApproval | Status::InFlight)
+    }
 }
 
 #[near(serializers = [borsh, json])]
@@ -239,6 +267,12 @@ pub struct PaymentRequest {
     pub failure_reason: Option<String>,
     pub period_index: u64,
     pub created_at_ms: u64,
+    /// When the transfer was sent.
+    pub dispatched_at_ms: Option<u64>,
+    /// Pending approvals only: the owner must decide before this time.
+    pub expires_at_ms: Option<u64>,
+    /// Position in the payment history.
+    pub seq: u64,
 }
 
 /// A rejected payment attempt, kept in a fixed-size ring buffer so the owner
@@ -288,6 +322,13 @@ pub struct Config {
     /// Plaintext memos are rejected.
     pub encrypted_memos_only: bool,
     pub require_tee: bool,
+    /// Proposed new owner, until they accept.
+    pub pending_owner: Option<AccountId>,
+    pub approval_ttl_ms: u64,
+    pub history_limit: u32,
+    /// How long a payment must be in flight before the owner may reconcile it.
+    pub in_flight_recovery_ms: u64,
+    pub open_payments: u32,
 }
 
 #[near(serializers = [json])]
@@ -317,10 +358,21 @@ pub struct Banbo {
     pending_total: u128,
     /// Sum of amounts InFlight (already deducted from the vault balance).
     in_flight_total: u128,
+    pending_owner: Option<AccountId>,
     agents: IterableMap<AccountId, Agent>,
     allowlist: IterableSet<AccountId>,
     requests: LookupMap<String, PaymentRequest>,
-    request_order: Vector<String>,
+    /// Payment keys in creation order, from history_head to history_tail.
+    history: LookupMap<u64, String>,
+    history_head: u64,
+    history_tail: u64,
+    history_limit: u32,
+    /// Keys of payments that are PendingApproval or InFlight.
+    open: IterableSet<String>,
+    approval_ttl_ms: u64,
+    /// Earliest expiry among pending approvals (u64::MAX if none), so the
+    /// sweep costs nothing until something can actually expire.
+    next_expiry_ms: u64,
     blocked: Vector<BlockedAttempt>,
     blocked_total: u64,
     tokens: IterableMap<AccountId, Token>,
@@ -400,7 +452,10 @@ fn limits_key(agent: &AccountId, token: &AccountId) -> String {
 
 #[near]
 impl Banbo {
+    /// `#[private]`: only the vault account itself can initialize it, so
+    /// nobody can front-run a deploy and make themselves the owner.
     #[init]
+    #[private]
     pub fn new(owner: AccountId, period_ms: u64, shared_cap: U128) -> Self {
         require!(period_ms > 0, "period_ms must be > 0");
         Self {
@@ -413,10 +468,17 @@ impl Banbo {
             shared_reserved: 0,
             pending_total: 0,
             in_flight_total: 0,
+            pending_owner: None,
             agents: IterableMap::new(StorageKey::Agents),
             allowlist: IterableSet::new(StorageKey::Allowlist),
             requests: LookupMap::new(StorageKey::Requests),
-            request_order: Vector::new(StorageKey::RequestOrder),
+            history: LookupMap::new(StorageKey::History),
+            history_head: 0,
+            history_tail: 0,
+            history_limit: DEFAULT_HISTORY_LIMIT,
+            open: IterableSet::new(StorageKey::Open),
+            approval_ttl_ms: DEFAULT_APPROVAL_TTL_MS,
+            next_expiry_ms: u64::MAX,
             blocked: Vector::new(StorageKey::Blocked),
             blocked_total: 0,
             tokens: IterableMap::new(StorageKey::Tokens),
@@ -563,6 +625,86 @@ impl Banbo {
             "agent_active",
             format!("{{\"agent\":{},\"active\":{}}}", esc(agent.as_str()), active),
         );
+    }
+
+    /// Remove an agent for good: its limits, token limits, rate window and
+    /// attestation are deleted (freeing their storage). Only possible when
+    /// it has nothing pending or in flight; decline or wait for those first.
+    /// To stop an agent right away, use `set_agent_active(false)`.
+    pub fn remove_agent(&mut self, agent: AccountId) {
+        self.assert_owner();
+        let a = self.agents.get(&agent).cloned().unwrap_or_else(|| env::panic_str("unknown agent"));
+        require!(a.reserved.0 == 0, "agent has payments pending or in flight");
+        let tokens: Vec<AccountId> = self.tokens.keys().cloned().collect();
+        for t in &tokens {
+            let k = limits_key(&agent, t);
+            if let Some(l) = self.token_limits.get(&k) {
+                require!(l.reserved.0 == 0, "agent has payments pending or in flight");
+            }
+        }
+        for t in &tokens {
+            self.token_limits.remove(&limits_key(&agent, t));
+        }
+        self.agents.remove(&agent);
+        self.rate.remove(&agent);
+        self.tee.remove(&agent);
+        event("agent_removed", format!("{{\"agent\":{}}}", esc(agent.as_str())));
+    }
+
+    /// Step one of an ownership transfer: name the new owner (None cancels).
+    /// Nothing changes until they call `accept_ownership`, so a typo can't
+    /// hand the vault to an account nobody controls.
+    pub fn propose_owner(&mut self, new_owner: Option<AccountId>) {
+        self.assert_owner();
+        if let Some(n) = &new_owner {
+            require!(n != &self.owner, "already the owner");
+        }
+        self.pending_owner = new_owner.clone();
+        event(
+            "owner_proposed",
+            format!(
+                "{{\"owner\":{},\"proposed\":{}}}",
+                esc(self.owner.as_str()),
+                new_owner.as_ref().map(|n| esc(n.as_str())).unwrap_or_else(|| "null".into())
+            ),
+        );
+    }
+
+    /// Step two: the proposed owner accepts.
+    pub fn accept_ownership(&mut self) {
+        let caller = env::predecessor_account_id();
+        require!(self.pending_owner.as_ref() == Some(&caller), "not the proposed owner");
+        let previous = std::mem::replace(&mut self.owner, caller.clone());
+        self.pending_owner = None;
+        event(
+            "owner_changed",
+            format!("{{\"previous\":{},\"owner\":{}}}", esc(previous.as_str()), esc(caller.as_str())),
+        );
+    }
+
+    /// How long a payment waits for approval before it expires and its budget
+    /// is released. Applies to payments requested from now on.
+    pub fn set_approval_ttl(&mut self, approval_ttl_ms: u64) {
+        self.assert_owner();
+        require!(
+            (MIN_APPROVAL_TTL_MS..=MAX_APPROVAL_TTL_MS).contains(&approval_ttl_ms),
+            "approval_ttl_ms must be between 1 minute and 30 days"
+        );
+        self.approval_ttl_ms = approval_ttl_ms;
+        event("approval_ttl_set", format!("{{\"approval_ttl_ms\":{}}}", approval_ttl_ms));
+    }
+
+    /// How many payment records to keep. Older finished records are deleted
+    /// a few at a time as new payments come in, returning their storage
+    /// deposit to the vault.
+    pub fn set_history_limit(&mut self, history_limit: u32) {
+        self.assert_owner();
+        require!(
+            (MIN_HISTORY_LIMIT..=MAX_HISTORY_LIMIT).contains(&history_limit),
+            "history_limit must be between 100 and 10000"
+        );
+        self.history_limit = history_limit;
+        event("history_limit_set", format!("{{\"history_limit\":{}}}", history_limit));
     }
 
     /// Allow a recipient. With a cooldown set, it can't be paid until the
@@ -859,6 +1001,7 @@ impl Banbo {
         require!(!self.paused, "vault is paused");
         let mut req = self.requests.get(&key).cloned().unwrap_or_else(|| env::panic_str("unknown request"));
         require!(req.status == Status::PendingApproval, "request is not pending approval");
+        require!(!self.is_expired(&req), "approval window has passed");
         // Allowlist may have changed since the request was made.
         let still_allowed = match &req.recipient_fingerprint {
             Some(fp) => self.hidden.contains_key(fp),
@@ -867,6 +1010,7 @@ impl Banbo {
         require!(still_allowed, "recipient no longer allowlisted");
         self.adjust_pending(&req.token, req.amount.0, false);
         req.status = Status::InFlight;
+        req.dispatched_at_ms = Some(env::block_timestamp_ms());
         self.requests.insert(key.clone(), req.clone());
         event("payment_approved", format!("{{\"key\":{}}}", esc(&key)));
         self.dispatch(&req)
@@ -880,8 +1024,41 @@ impl Banbo {
         self.adjust_pending(&req.token, req.amount.0, false);
         self.release(&req);
         req.status = Status::Declined;
-        self.requests.insert(key.clone(), req);
+        self.store(req);
         event("payment_declined", format!("{{\"key\":{}}}", esc(&key)));
+    }
+
+    /// Release the budget of approvals nobody decided on in time. Anyone may
+    /// call it; `request_payment` also does this on its own, so expired
+    /// approvals never block an agent for long. Returns how many expired.
+    pub fn expire_pending(&mut self, limit: Option<u32>) -> u32 {
+        self.sweep_expired(limit.unwrap_or(SWEEP_LIMIT).min(MAX_OPEN))
+    }
+
+    /// Recovery for a payment whose transfer result never came back (its
+    /// callback ran out of gas, for example). After IN_FLIGHT_RECOVERY_MS the
+    /// owner records the outcome they can see on the explorer: `transferred`
+    /// true settles it, false releases its budget (and, for a token, puts the
+    /// amount back in the vault's tracked balance). A late callback after
+    /// this is refused, so the payment still settles exactly once.
+    pub fn reconcile_stuck(&mut self, key: String, transferred: bool) {
+        self.assert_owner();
+        let req = self.requests.get(&key).cloned().unwrap_or_else(|| env::panic_str("unknown request"));
+        require!(req.status == Status::InFlight, "request is not in flight");
+        let since = req.dispatched_at_ms.unwrap_or(req.created_at_ms);
+        require!(
+            env::block_timestamp_ms() >= since + IN_FLIGHT_RECOVERY_MS,
+            "too early: the transfer result can still arrive"
+        );
+        event(
+            "payment_reconciled",
+            format!("{{\"key\":{},\"transferred\":{}}}", esc(&key), transferred),
+        );
+        if transferred {
+            self.complete(req);
+        } else {
+            self.fail(req, "reconciled_by_owner");
+        }
     }
 
     // ------------------------------------------------------------ agent entry
@@ -904,6 +1081,9 @@ impl Banbo {
         require!(!request_id.is_empty() && request_id.len() <= MAX_REQUEST_ID_LEN, "bad request_id");
         let encrypted = is_encrypted(&memo);
         require!(memo.len() <= if encrypted { MAX_ENC_LEN } else { MAX_MEMO_LEN }, "memo too long");
+
+        // Free the budget of approvals that have run out of time first.
+        self.sweep_expired(SWEEP_LIMIT);
 
         let key = format!("{}:{}", agent_id, request_id);
         if let Some(existing) = self.requests.get(&key) {
@@ -951,6 +1131,7 @@ impl Banbo {
 
         // Reserve against agent + shared budgets before anything leaves.
         let period = self.current_period();
+        let now = env::block_timestamp_ms();
         let mut limits = self.get_limits(&agent_id, &token).unwrap();
         limits.reserved = U128(limits.reserved.0 + amount.0);
         let needs_approval = amount.0 > limits.approval_threshold.0;
@@ -971,10 +1152,17 @@ impl Banbo {
             status: if needs_approval { Status::PendingApproval } else { Status::InFlight },
             failure_reason: None,
             period_index: period,
-            created_at_ms: env::block_timestamp_ms(),
+            created_at_ms: now,
+            dispatched_at_ms: if needs_approval { None } else { Some(now) },
+            expires_at_ms: if needs_approval { Some(now + self.approval_ttl_ms) } else { None },
+            seq: self.history_tail,
         };
+        if needs_approval {
+            self.next_expiry_ms = self.next_expiry_ms.min(now + self.approval_ttl_ms);
+        }
         self.requests.insert(key.clone(), req.clone());
-        self.request_order.push(key.clone());
+        self.open.insert(key.clone());
+        self.push_history(key.clone());
         let mut w = self.rolled_rate(&agent_id);
         w.count += 1;
         self.rate.insert(agent_id.clone(), w);
@@ -1012,15 +1200,7 @@ impl Banbo {
         // this callback panic and leave the request stuck.
         let ok = env::promise_result_checked(0, MAX_RESULT_LEN).is_ok();
         if ok {
-            self.adjust_in_flight(&req.token, req.amount.0, false);
-            self.settle(&req);
-            let mut req = req;
-            req.status = Status::Settled;
-            event(
-                "payment_settled",
-                format!("{{\"key\":{},\"amount\":\"{}\",\"token\":{}}}", esc(&key), req.amount.0, esc_token(&req.token)),
-            );
-            self.requests.insert(key, req);
+            self.complete(req);
         } else {
             // A failed native transfer's deposit is refunded by the protocol;
             // a failed ft_transfer never moved the tokens.
@@ -1073,6 +1253,11 @@ impl Banbo {
             owner_encryption_key: self.owner_encryption_key.clone(),
             encrypted_memos_only: self.encrypted_memos_only,
             require_tee: self.require_tee,
+            pending_owner: self.pending_owner.clone(),
+            approval_ttl_ms: self.approval_ttl_ms,
+            history_limit: self.history_limit,
+            in_flight_recovery_ms: IN_FLIGHT_RECOVERY_MS,
+            open_payments: self.open.len(),
         }
     }
 
@@ -1145,17 +1330,22 @@ impl Banbo {
         self.requests.get(&key).cloned()
     }
 
-    /// Most recent first.
+    /// Most recent first. Only the last `history_limit` payments are kept.
     pub fn list_requests(&self, from_index: Option<u32>, limit: Option<u32>) -> Vec<PaymentRequest> {
-        let len = self.request_order.len();
-        let skip = from_index.unwrap_or(0).min(len);
-        let limit = limit.unwrap_or(50).min(100);
-        (0..len - skip)
+        let len = self.history_tail - self.history_head;
+        let skip = (from_index.unwrap_or(0) as u64).min(len);
+        let limit = limit.unwrap_or(50).min(100) as u64;
+        let newest = self.history_tail - skip;
+        (newest.saturating_sub(limit).max(self.history_head)..newest)
             .rev()
-            .take(limit as usize)
-            .filter_map(|i| self.request_order.get(i))
+            .filter_map(|i| self.history.get(&i))
             .filter_map(|k| self.requests.get(k).cloned())
             .collect()
+    }
+
+    /// Payments waiting for approval or for their transfer result.
+    pub fn list_open(&self) -> Vec<PaymentRequest> {
+        self.open.iter().filter_map(|k| self.requests.get(k).cloned()).collect()
     }
 
     /// Most recent blocked attempts first (up to 50 kept).
@@ -1470,6 +1660,9 @@ impl Banbo {
         if self.encrypted_memos_only && !memo.is_empty() && !is_encrypted(memo) {
             return Err("memo_not_encrypted".into());
         }
+        if self.open.len() >= MAX_OPEN {
+            return Err("too_many_open_payments".into());
+        }
         if self.max_payments_per_hour > 0 && self.rolled_rate(agent_id).count >= self.max_payments_per_hour {
             return Err("exceeds_payment_rate".into());
         }
@@ -1567,6 +1760,7 @@ impl Banbo {
         self.release(&req);
         req.status = Status::Failed;
         req.failure_reason = Some(reason.to_string());
+        let stored = req.clone();
         event(
             "payment_failed",
             format!(
@@ -1577,7 +1771,89 @@ impl Banbo {
                 esc(reason)
             ),
         );
-        self.requests.insert(req.key.clone(), req);
+        self.store(stored);
+    }
+
+    /// A transfer went through: move its reservation to spent.
+    fn complete(&mut self, mut req: PaymentRequest) {
+        self.adjust_in_flight(&req.token, req.amount.0, false);
+        self.settle(&req);
+        req.status = Status::Settled;
+        event(
+            "payment_settled",
+            format!("{{\"key\":{},\"amount\":\"{}\",\"token\":{}}}", esc(&req.key), req.amount.0, esc_token(&req.token)),
+        );
+        self.store(req);
+    }
+
+    /// Save a request; a finished one leaves the open set. A finished record
+    /// that has already dropped out of the history window is deleted.
+    fn store(&mut self, req: PaymentRequest) {
+        let key = req.key.clone();
+        if req.status.is_final() {
+            self.open.remove(&key);
+            if req.seq < self.history_head {
+                self.requests.remove(&key);
+                return;
+            }
+        }
+        self.requests.insert(key, req);
+    }
+
+    fn is_expired(&self, req: &PaymentRequest) -> bool {
+        req.status == Status::PendingApproval
+            && req.expires_at_ms.is_some_and(|t| env::block_timestamp_ms() >= t)
+    }
+
+    /// Expire up to `limit` overdue approvals. Cheap when nothing is due.
+    fn sweep_expired(&mut self, limit: u32) -> u32 {
+        let now = env::block_timestamp_ms();
+        if now < self.next_expiry_ms || limit == 0 {
+            return 0;
+        }
+        let mut due = Vec::new();
+        let mut next = u64::MAX;
+        for k in self.open.iter() {
+            let Some(r) = self.requests.get(k) else { continue };
+            if let (Status::PendingApproval, Some(t)) = (&r.status, r.expires_at_ms) {
+                if now >= t && (due.len() as u32) < limit {
+                    due.push(k.clone());
+                } else {
+                    next = next.min(t);
+                }
+            }
+        }
+        // Left over (over the limit) items are due now, so next stays <= now.
+        self.next_expiry_ms = next;
+        let n = due.len() as u32;
+        for k in due {
+            let mut req = self.requests.get(&k).cloned().unwrap();
+            self.adjust_pending(&req.token, req.amount.0, false);
+            self.release(&req);
+            req.status = Status::Expired;
+            event("payment_expired", format!("{{\"key\":{}}}", esc(&k)));
+            self.store(req);
+        }
+        n
+    }
+
+    /// Record a new payment key and trim the oldest records past the limit.
+    fn push_history(&mut self, key: String) {
+        self.history.insert(self.history_tail, key);
+        self.history_tail += 1;
+        let mut pruned = 0;
+        while self.history_tail - self.history_head > self.history_limit as u64 && pruned < PRUNE_PER_INSERT {
+            let idx = self.history_head;
+            if let Some(old) = self.history.remove(&idx) {
+                // An unfinished payment keeps its record (it is still in the
+                // open set and reachable with get_request / list_open).
+                if self.requests.get(&old).is_some_and(|r| r.status.is_final()) {
+                    self.requests.remove(&old);
+                }
+            }
+            self.history_head += 1;
+            pruned += 1;
+        }
     }
 
     /// Move a reservation to spent (only counts toward spent if it is still
@@ -1615,3 +1891,5 @@ impl Banbo {
 mod tests;
 #[cfg(test)]
 mod tests_private;
+#[cfg(test)]
+mod tests_hardening;

@@ -1,6 +1,6 @@
 import { useBanbo } from '../state';
 import { activity, STATUS } from '../activity';
-import { near, units, ago, reasonText, short } from '../format';
+import { near, units, ago, until, reasonText, short } from '../format';
 import { assetOf } from '../near';
 import { open as openSealed, isSealed } from '../privacy';
 import { Panel, PageHeader, StatusBadge, Addr, Amount, BudgetBar, MiniBar, Empty } from '../ui';
@@ -76,9 +76,17 @@ export default function Overview() {
                 <div className="ap-amount"><Amount yocto={r.amount} asset={assetOf(s, r.token)} strong /></div>
                 <div className="ap-main">
                   <div><span className="mono">{short(r.agent)}</span> wants to pay <Addr id={r.recipient} explorer={b.explorer} /></div>
-                  <div className="muted small">{r.memo ? (isSealed(r.memo) ? (b.keys && openSealed(r.memo, b.keys.secretKey) ? `“${openSealed(r.memo, b.keys.secretKey)}” · ` : 'Encrypted memo · ') : `“${r.memo}” · `) : ''}requested {ago(r.created_at_ms, b.now)} · above this agent’s approval threshold</div>
+                  <div className="muted small">{r.memo ? (isSealed(r.memo) ? (b.keys && openSealed(r.memo, b.keys.secretKey) ? `“${openSealed(r.memo, b.keys.secretKey)}” · ` : 'Encrypted memo · ') : `“${r.memo}” · `) : ''}requested {ago(r.created_at_ms, b.now)} · above this agent’s approval threshold
+                    {r.expires_at_ms && (r.expires_at_ms > b.now
+                      ? <> · expires {until(r.expires_at_ms, b.now)}</>
+                      : <> · <span className="reason">approval window passed</span></>)}
+                  </div>
                 </div>
-                {b.isOwner ? (
+                {r.expires_at_ms && r.expires_at_ms <= b.now ? (
+                  <div className="ap-actions">
+                    <button className="btn" disabled={!b.writer || !!b.busy} onClick={() => b.act('Expired approvals released', 'expire_pending', {})} title="Nobody decided in time. Release its reserved budget.">Release budget</button>
+                  </div>
+                ) : b.isOwner ? (
                   <div className="ap-actions">
                     <button className="btn" disabled={!canAct} onClick={() => b.act('Payment declined', 'decline', { key: r.key })}>Decline</button>
                     <button className="btn primary" disabled={!canAct} onClick={() => b.act('Payment approved and sent', 'approve', { key: r.key })}>Approve</button>

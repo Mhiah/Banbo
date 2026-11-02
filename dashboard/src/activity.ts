@@ -29,6 +29,7 @@ export const STATUS: Record<Kind, { label: string; tone: 'red' | 'green' | 'ambe
   Settled: { label: 'Paid', tone: 'green', help: 'Transfer confirmed. The reserved amount now counts as spent.' },
   Failed: { label: 'Failed · refunded', tone: 'amber', help: 'The transfer failed on-chain. The reservation was released exactly once and the funds returned to the vault.' },
   Declined: { label: 'Declined', tone: 'gray', help: 'You declined this payment. The reservation was released.' },
+  Expired: { label: 'Expired', tone: 'gray', help: 'Nobody approved this payment in time, so it expired and its reservation was released. Nothing was sent.' },
 };
 
 export function activity(state: VaultState): ActivityItem[] {

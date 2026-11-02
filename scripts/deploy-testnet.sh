@@ -12,7 +12,7 @@ set -euo pipefail
 WASM="$(dirname "$0")/../contract/res/banbo.wasm"
 NEAR() { printf '%s000000000000000000000' "$(awk "BEGIN{printf \"%d\", $1*1000}")"; }
 
-near account create-account fund-myself "$VAULT" '12 NEAR' autogenerate-new-keypair \
+near account create-account fund-myself "$VAULT" '15 NEAR' autogenerate-new-keypair \
   save-to-keychain sign-as "$OWNER" network-config testnet sign-with-keychain send
 
 near contract deploy "$VAULT" use-file "$WASM" with-init-call new \

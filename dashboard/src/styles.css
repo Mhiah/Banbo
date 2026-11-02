@@ -396,3 +396,10 @@ h3.sub { font-size: 13px; font-weight: 600; margin: 18px 0 2px; }
 }
 .panel > p.muted + .risk-grid { margin-top: 14px; }
 .rcpt.spaced { gap: 4px 10px; }
+
+/* Hardening: remove agent, stuck payments, ownership */
+.btn.danger-text { color: var(--red); }
+.stuck { border: 1px solid var(--amber-wash); background: var(--amber-wash); border-radius: 8px; padding: 10px 12px; margin: 12px 0; }
+.stuck .detail-actions { margin: 10px 0 0; }
+.owner-transfer { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
+.owner-transfer .field { flex: 1 1 260px; margin: 0; }

@@ -72,6 +72,8 @@ const REASONS: Record<string, string> = {
   agent_not_attested: 'Agent isn’t a verified TEE agent',
   attestation_expired: 'Agent’s TEE attestation expired',
   agent_measurement_not_approved: 'Agent runs an image you no longer approve',
+  too_many_open_payments: 'Too many payments waiting at once',
+  reconciled_by_owner: 'Marked as not sent by the owner',
 };
 
 /** 3_600_000 → "1 hour", 90_000 → "1.5 minutes", 0 → "Off". */
