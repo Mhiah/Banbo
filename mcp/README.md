@@ -6,24 +6,24 @@ Lets any AI agent that speaks the [Model Context Protocol](https://modelcontextp
 
 | Tool | What it does |
 |---|---|
-| `banbo_status` | The agent's limits, what it has spent and has left this period, payments left this hour, whether the vault is paused, and whether the vault accepts this agent's origin labels. Read-only. |
-| `banbo_list_tasks` | The open tasks the owner gave this agent: payees, budget left, largest single payment, which email senders are trusted to set an amount. Read-only. |
+| `banbo_status` | The agent's limits, what it has spent and has left this period, payments made this hour, whether the vault is paused, and whether the vault accepts this agent's origin labels. Read-only. |
+| `banbo_list_mandates` | The open task mandates the owner gave this agent: payees, budget left, largest single payment, which email senders are trusted to set an amount. Read-only. |
 | `banbo_pay` | Pay an approved recipient in NEAR or a token the vault accepts (e.g. USDC). The contract applies the allowlist, limits, approval threshold, cooldowns and rate limit. |
-| `banbo_pay_invoice` | Pay an emailed invoice under a task, with origin labels the server works out itself (below). |
+| `banbo_pay_invoice` | Pay an emailed invoice under a task mandate, with origin labels the server works out itself (below). |
 | `banbo_payment_status` | Paid, waiting for the owner, failed and refunded, declined, expired, or refused. Read-only. |
 
 Every answer says what the contract did, in words: "Paid … The network confirmed the transfer", "Held for the owner: …", or "Refused by the vault contract: … Nothing was paid." A payment is called paid only after the network has confirmed it. Reusing a `request_id` never pays twice.
 
 ## Origin labels the model can't fake
 
-[Origin-checked payments](../docs/ORIGIN_CHECKS.md) only work if the labels are honest, so **no tool lets the model set a label**. For `banbo_pay_invoice` the model passes the task, the complete raw email and the amount, and the server labels them:
+[Origin-checked payments](../docs/ORIGIN_CHECKS.md) only work if the labels are honest, so **no tool lets the model set a label**. For `banbo_pay_invoice` the model passes the mandate, the complete raw email and the amount, and the server labels them:
 
 - **Amount:** the server checks the email's DKIM signature itself. The amount is labelled `email:<domain>` only if the signature verifies and its domain matches the From address; otherwise `email:unverified`. The amount must be written in the email, or nothing is sent.
-- **Recipient:** labelled as the owner's only if the owner listed it as one of the task's payees. Anything else is labelled as coming from the email, and the contract refuses it.
+- **Recipient:** labelled as the owner's only if the owner listed it as one of the mandate's payees. Anything else is labelled as coming from the email, and the contract refuses it.
 
 A forged "corrected invoice" from a lookalike domain is therefore held for the owner with the email's sha256, and a "pay our partner instead" redirect is refused, whatever the model was talked into.
 
-Limits of this check: it proves which domain sent the email and that the amount is written in it, not which number on the invoice is the total. The task's per-payment cap and budget bound the damage. The vault accepts these labels only from an agent the owner vouches for (`set_label_vouch`) or one with an Intel TDX attestation; the server runs on the owner's or operator's machine, so vouching for it means trusting that machine.
+Limits of this check: it proves which domain sent the email and that the amount is written in it, not which number on the invoice is the total. The mandate's per-payment cap and budget bound the damage. The vault accepts these labels only from an agent the owner vouches for (`set_label_vouch`) or one with an Intel TDX attestation; the server runs on the owner's or operator's machine, so vouching for it means trusting that machine.
 
 ## Setup
 
@@ -43,7 +43,7 @@ near account add-key agent.you.testnet grant-function-call-access --allowance '1
 
 This saves the new key as a JSON file under `~/.near-credentials/testnet/`; point `BANBO_CREDENTIALS_FILE` at that file. The allowance pays for gas only: each payment uses up to 100 Tgas of it (about 0.01 NEAR at the minimum gas price), so 1 NEAR covers roughly 100 payments. When it runs out the server says so; add a new key the same way. The server refuses to start with a full-access key.
 
-**2. For invoice payments**, the owner vouches for this agent's labels (on the dashboard's Tasks page, or `set_label_vouch`) and creates a task for it.
+**2. For invoice payments**, the owner vouches for this agent's labels (on the dashboard's Mandates page, or `set_label_vouch`) and creates a task mandate for it.
 
 **3. Add the server to your MCP client.** For Claude Desktop, in `claude_desktop_config.json`:
 
@@ -86,4 +86,4 @@ cd mcp && npm test          # 17 unit tests: amounts, key checks, labels, refusa
 make test-sandbox           # includes 7 end-to-end tests against the real contract on a local NEAR node
 ```
 
-The end-to-end tests run the server over stdio with a real function-call key: a full-access key is refused at startup, NEAR and USDC payments are paid and confirmed, a payment to an attacker is refused, a retry pays nothing more, and invoice payments under a task are paid, held or refused with the labels recorded on-chain.
+The end-to-end tests run the server over stdio with a real function-call key: a full-access key is refused at startup, NEAR and USDC payments are paid and confirmed, a payment to an attacker is refused, a retry pays nothing more, and invoice payments under a task mandate are paid, held or refused with the labels recorded on-chain.

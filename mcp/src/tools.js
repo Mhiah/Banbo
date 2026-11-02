@@ -97,28 +97,31 @@ export function createServer({ vault, salts = {}, dkimResolver } = {}) {
       const tl = BigInt(l.period_limit) - BigInt(l.spent) - BigInt(l.reserved);
       lines.push(`${t.symbol} (${token}): up to ${u(l.per_tx_max)} per payment, ${u(l.period_limit)} per period; ${u(tl > 0n ? tl : 0n)} left. Over ${u(l.approval_threshold)} waits for the owner.`);
     }
-    if (cfg.max_payments_per_hour) lines.push(`Payments this hour: ${rate.count ?? 0} of ${cfg.max_payments_per_hour}.`);
-    const labels = tee && tee.valid_until_ms > Date.now() ? 'TEE-attested' : vouched.includes(me) ? 'vouched for by the owner' : 'not accepted (invoice payments under a task will be refused)';
+    if (cfg.max_payments_per_hour) lines.push(`Payments in the current one-hour window: ${rate.count ?? 0} of ${cfg.max_payments_per_hour}.`);
+    // Same order as the contract: the owner's vouch first, then a TDX attestation.
+    const labels = vouched.includes(me) ? 'accepted: vouched for by the owner'
+      : tee && tee.valid_until_ms > Date.now() ? `accepted while this agent's TDX attestation is valid (until ${new Date(tee.valid_until_ms).toISOString()}) and its image is still approved`
+        : 'not accepted (invoice payments under a task mandate will be refused)';
     lines.push(`Origin labels from this agent: ${labels}.`);
-    if (cfg.require_origin) lines.push('The owner requires origin labels on every payment: use banbo_pay_invoice under a task.');
+    if (cfg.require_origin) lines.push('The owner requires origin labels on every payment: use banbo_pay_invoice under a task mandate.');
     return text(lines.join('\n'));
   });
 
-  server.registerTool('banbo_list_tasks', {
-    title: 'List my Banbo tasks',
-    description: 'List the open tasks the owner has given this agent: who it may pay, the budget left, the largest single payment, and which email senders are trusted to set an amount. Read-only.',
+  server.registerTool('banbo_list_mandates', {
+    title: 'List my Banbo task mandates',
+    description: 'List the open task mandates the owner has given this agent: who it may pay, the budget left, the largest single payment, and which email senders are trusted to set an amount. Read-only.',
     inputSchema: {},
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, async () => {
     const tasks = (await vault.view('list_tasks')).filter((t) => t.agent === me && !t.closed && t.expires_at_ms > Date.now());
-    if (!tasks.length) return text('The owner has given this agent no open tasks.');
+    if (!tasks.length) return text('The owner has given this agent no open task mandates.');
     const out = [];
     for (const t of tasks) {
       const a = await resolveToken(vault, t.token).catch(() => ({ symbol: t.token, decimals: 0 }));
       const u = (v) => `${formatUnits(v, a.decimals)} ${a.symbol}`;
       const left = BigInt(t.budget) - BigInt(t.spent) - BigInt(t.reserved);
       out.push([
-        `Task ${t.id}: ${t.description || '(no description)'}`,
+        `Mandate ${t.id}: ${t.description || '(no description)'}`,
         `  pays only: ${t.payees.join(', ')}`,
         `  budget left: ${u(left > 0n ? left : 0n)} of ${u(t.budget)}; at most ${u(t.max_per_payment)} per payment`,
         `  amounts trusted from: ${t.trusted_sources.length ? t.trusted_sources.join(', ') : 'nobody (every amount is held for the owner)'}`,
@@ -153,24 +156,24 @@ export function createServer({ vault, salts = {}, dkimResolver } = {}) {
   });
 
   server.registerTool('banbo_pay_invoice', {
-    title: 'Pay an emailed invoice under a task',
-    description: 'Pay an invoice that arrived by email, under a task the owner created. Pass the complete raw email (headers and body, as downloaded, so its DKIM signature can be checked) and the amount to pay. The server labels where the recipient and amount came from (you cannot set the labels): the amount must appear in the email, and it counts as coming from the sender\'s domain only if the DKIM signature verifies. The vault then pays, holds the payment for the owner, or refuses it.',
+    title: 'Pay an emailed invoice under a task mandate',
+    description: 'Pay an invoice that arrived by email, under a task mandate the owner created. Pass the complete raw email (headers and body, as downloaded, so its DKIM signature can be checked) and the amount to pay. The server labels where the recipient and amount came from (you cannot set the labels): the amount must appear in the email, and it counts as coming from the sender\'s domain only if the DKIM signature verifies. The vault then pays, holds the payment for the owner, or refuses it.',
     inputSchema: {
-      task_id: z.string().min(1).max(64).describe('The task id from banbo_list_tasks'),
+      mandate_id: z.string().min(1).max(64).describe('The mandate id from banbo_list_mandates'),
       email: z.string().min(20).max(200_000).describe('The complete raw email source (RFC 5322), including the DKIM-Signature header'),
       amount: z.string().max(40).describe('The amount to pay as written in the email, e.g. "0.30"'),
-      recipient: z.string().min(2).max(64).optional().describe('One of the task\'s payees; defaults to the task\'s only payee'),
+      recipient: z.string().min(2).max(64).optional().describe('One of the mandate\'s payees; defaults to the mandate\'s only payee'),
       memo: z.string().max(200).optional().describe('Short note for the owner, e.g. the invoice number'),
       request_id: z.string().regex(REQUEST_ID).optional().describe('Your id for this payment, to retry safely; one is generated if omitted'),
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
-  }, async ({ task_id, email, amount, recipient, memo = '', request_id }) => {
+  }, async ({ mandate_id, email, amount, recipient, memo = '', request_id }) => {
     try {
-      const task = await vault.view('get_task', { id: task_id });
-      if (!task) return fail(`Not sent: there is no task "${task_id}". See banbo_list_tasks.`);
-      if (task.agent !== me) return fail(`Not sent: task "${task_id}" belongs to another agent.`);
+      const task = await vault.view('get_task', { id: mandate_id });
+      if (!task) return fail(`Not sent: there is no task mandate "${mandate_id}". See banbo_list_mandates.`);
+      if (task.agent !== me) return fail(`Not sent: mandate "${mandate_id}" belongs to another agent.`);
       const to = recipient ?? (task.payees.length === 1 ? task.payees[0] : null);
-      if (!to) return fail(`Not sent: task "${task_id}" has several payees (${task.payees.join(', ')}); say which one in "recipient".`);
+      if (!to) return fail(`Not sent: mandate "${mandate_id}" has several payees (${task.payees.join(', ')}); say which one in "recipient".`);
       const asset = await resolveToken(vault, task.token);
       const units = parseUnits(amount, asset.decimals);
 
@@ -178,10 +181,10 @@ export function createServer({ vault, salts = {}, dkimResolver } = {}) {
       if (!amountsIn(doc.text, asset.decimals).has(units)) {
         return fail(`Not sent: ${amount} is not written in this email. Banbo only labels an amount with the email it came from, so pay the amount exactly as the invoice states it.`);
       }
-      // The owner wrote the task's payee list, so a payee is the owner's
+      // The owner wrote the mandate's payee list, so a payee is the owner's
       // choice. Anything else could only have come from the document.
       const origin = {
-        task_id,
+        task_id: mandate_id,
         recipient: toContract(task.payees.includes(to) ? OWNER : doc.label),
         amount: toContract(doc.label),
       };

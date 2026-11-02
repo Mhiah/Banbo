@@ -66,8 +66,8 @@ const forgedEmail = () => signed('acme-billing.co', mail({
 test('lists the five tools, with read-only hints on the reads', async () => {
   const { client } = await connect(fakeVault());
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((t) => t.name).sort(), ['banbo_list_tasks', 'banbo_pay', 'banbo_pay_invoice', 'banbo_payment_status', 'banbo_status']);
-  for (const t of tools) assert.equal(t.annotations.readOnlyHint, ['banbo_status', 'banbo_list_tasks', 'banbo_payment_status'].includes(t.name), t.name);
+  assert.deepEqual(tools.map((t) => t.name).sort(), ['banbo_list_mandates', 'banbo_pay', 'banbo_pay_invoice', 'banbo_payment_status', 'banbo_status']);
+  for (const t of tools) assert.equal(t.annotations.readOnlyHint, ['banbo_status', 'banbo_list_mandates', 'banbo_payment_status'].includes(t.name), t.name);
   // No tool lets the model pass an origin label.
   for (const t of tools) assert.ok(!('origin' in (t.inputSchema.properties ?? {})), t.name);
 });
@@ -124,7 +124,7 @@ test('invoice from DKIM-verified acme.com: owner recipient, amount labelled with
   const v = fakeVault();
   const { call } = await connect(v);
   const email = await acmeEmail();
-  const r = await call('banbo_pay_invoice', { task_id: 'acme-1', email, amount: '0.3', memo: '1042' });
+  const r = await call('banbo_pay_invoice', { mandate_id: 'acme-1', email, amount: '0.3', memo: '1042' });
   assert.ok(!r.isError, r.content[0].text);
   const o = v.sent[0].origin;
   assert.equal(o.task_id, 'acme-1');
@@ -140,7 +140,7 @@ test('invoice from DKIM-verified acme.com: owner recipient, amount labelled with
 test('forged invoice: the amount is labelled with the lookalike domain, whatever the model says', async () => {
   const v = fakeVault({ outcome: { outcome: 'pending_approval', key: 'agent.near:x' }, status: 'PendingApproval' });
   const { call } = await connect(v);
-  const r = await call('banbo_pay_invoice', { task_id: 'acme-1', email: await forgedEmail(), amount: '0.45' });
+  const r = await call('banbo_pay_invoice', { mandate_id: 'acme-1', email: await forgedEmail(), amount: '0.45' });
   assert.equal(v.sent[0].origin.amount.source, 'email:acme-billing.co');
   assert.match(r.content[0].text, /^Held for the owner/);
 });
@@ -148,7 +148,7 @@ test('forged invoice: the amount is labelled with the lookalike domain, whatever
 test('a recipient that is not a task payee is labelled as coming from the email', async () => {
   const v = fakeVault({ outcome: { outcome: 'rejected', reason: 'recipient_from_untrusted_source' } });
   const { call } = await connect(v);
-  const r = await call('banbo_pay_invoice', { task_id: 'acme-1', email: await forgedEmail(), amount: '0.45', recipient: 'globex.near' });
+  const r = await call('banbo_pay_invoice', { mandate_id: 'acme-1', email: await forgedEmail(), amount: '0.45', recipient: 'globex.near' });
   assert.equal(v.sent[0].origin.recipient.kind, 'source');
   assert.equal(v.sent[0].origin.recipient.source, 'email:acme-billing.co');
   assert.match(r.content[0].text, /^Refused by the vault contract/);
@@ -157,7 +157,7 @@ test('a recipient that is not a task payee is labelled as coming from the email'
 test('an amount that is not written in the email is never sent', async () => {
   const v = fakeVault();
   const { call } = await connect(v);
-  const r = await call('banbo_pay_invoice', { task_id: 'acme-1', email: await acmeEmail('0.30'), amount: '0.5' });
+  const r = await call('banbo_pay_invoice', { mandate_id: 'acme-1', email: await acmeEmail('0.30'), amount: '0.5' });
   assert.equal(r.isError, true);
   assert.match(r.content[0].text, /not written in this email/);
   assert.equal(v.sent.length, 0);
@@ -167,7 +167,7 @@ test('a tampered email loses its DKIM label', async () => {
   const v = fakeVault();
   const { call } = await connect(v);
   const tampered = (await acmeEmail('0.30')).replace('0.30', '0.45');
-  await call('banbo_pay_invoice', { task_id: 'acme-1', email: tampered, amount: '0.45' });
+  await call('banbo_pay_invoice', { mandate_id: 'acme-1', email: tampered, amount: '0.45' });
   assert.equal(v.sent[0].origin.amount.source, 'email:unverified');
 });
 
@@ -175,9 +175,9 @@ test('task checks: unknown, someone else\'s, and ambiguous payee', async () => {
   const v = fakeVault();
   const { call } = await connect(v);
   const email = await acmeEmail();
-  assert.match((await call('banbo_pay_invoice', { task_id: 'nope', email, amount: '0.3' })).content[0].text, /no task/);
-  assert.match((await call('banbo_pay_invoice', { task_id: 'other', email, amount: '0.3' })).content[0].text, /another agent/);
-  assert.match((await call('banbo_pay_invoice', { task_id: 'two', email, amount: '0.3' })).content[0].text, /several payees/);
+  assert.match((await call('banbo_pay_invoice', { mandate_id: 'nope', email, amount: '0.3' })).content[0].text, /no task mandate/);
+  assert.match((await call('banbo_pay_invoice', { mandate_id: 'other', email, amount: '0.3' })).content[0].text, /another agent/);
+  assert.match((await call('banbo_pay_invoice', { mandate_id: 'two', email, amount: '0.3' })).content[0].text, /several payees/);
   assert.equal(v.sent.length, 0);
 });
 
@@ -186,10 +186,10 @@ test('status and task list read the vault', async () => {
   const s = (await call('banbo_status')).content[0].text;
   assert.match(s, /spent 1 NEAR, reserved 0 NEAR, 2 NEAR left/);
   assert.match(s, /USDC \(usdc.near\): up to 10 USDC per payment, 50 USDC per period; 42.5 USDC left/);
-  assert.match(s, /Payments this hour: 2 of 5/);
-  assert.match(s, /vouched for by the owner/);
-  const t = (await call('banbo_list_tasks')).content[0].text;
-  assert.match(t, /Task acme-1: Pay Acme/);
+  assert.match(s, /Payments in the current one-hour window: 2 of 5/);
+  assert.match(s, /accepted: vouched for by the owner/);
+  const t = (await call('banbo_list_mandates')).content[0].text;
+  assert.match(t, /Mandate acme-1: Pay Acme/);
   assert.match(t, /budget left: 1 NEAR of 1 NEAR; at most 0.5 NEAR per payment/);
-  assert.doesNotMatch(t, /Task other/);
+  assert.doesNotMatch(t, /Mandate other/);
 });

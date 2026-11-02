@@ -8,7 +8,7 @@ Other agent wallets check *how much* and *to whom*. Banbo also checks **who said
 
 Built at NEAR HACKATHON (Nov 2026). Tracks: **AI Security & Defense**, Privacy & Private AI, Agent Economy, Open Innovation.
 
-**Contents:** [The problem](#the-problem) · [Why limits aren't enough](#why-spending-limits-arent-enough) · [The research](#the-research-camel) · [What Banbo builds](#what-banbo-builds) · [Architecture](#architecture) · [The result](#the-result) · [Try it](#try-it) · [Everything Banbo enforces](#everything-banbo-enforces) · [The demo](#the-demo-eight-acts) · [Dashboard](#owner-dashboard) · [Technical details](#technical-details) · [Tests](#tests) · [Limitations](#limitations)
+**Contents:** [The problem](#the-problem) · [Why limits aren't enough](#why-spending-limits-arent-enough) · [The research](#the-research-camel) · [What Banbo builds](#what-banbo-builds) · [Architecture](#architecture) · [The result](#the-result) · [Try it](#try-it) · [MCP server](#use-it-from-your-own-agent-mcp) · [Everything Banbo enforces](#everything-banbo-enforces) · [The demo](#the-demo-eight-acts) · [Dashboard](#owner-dashboard) · [Technical details](#technical-details) · [Tests](#tests) · [Limitations](#limitations)
 
 ## The problem
 
@@ -155,6 +155,20 @@ To see it in the dashboard:
 make sandbox     # terminal 1: local NEAR node, a seeded vault, test agents
 make dashboard   # terminal 2: http://localhost:5173, then open Demo and run "Invoice fraud (origin checks)"
 ```
+
+## Use it from your own agent (MCP)
+
+The [Banbo MCP server](mcp/README.md) lets any agent that speaks the Model Context Protocol (Claude Desktop, Claude Code, Cursor, a NEAR AI agent) pay through a Banbo vault. It holds only the agent's function-call key and refuses to start with a full-access key.
+
+| Tool | |
+|---|---|
+| `banbo_status` | the agent's limits, what it has spent and has left, and whether its origin labels are accepted |
+| `banbo_list_mandates` | the task mandates the owner gave this agent |
+| `banbo_pay` | pay an approved recipient in NEAR or USDC; the contract applies every rule |
+| `banbo_pay_invoice` | pay an emailed invoice under a mandate, with labels the server derives itself |
+| `banbo_payment_status` | paid, held for the owner, failed and refunded, declined, expired or refused |
+
+**The model never sets an origin label.** For an invoice, the server checks the email's DKIM signature itself, accepts the amount only if it is written in that email, and labels the recipient as the owner's only if it is one of the mandate's payees. A prompt-injected model can't claim a forged amount came from a trusted sender. Every answer says what the contract did, and a payment is called paid only after the network confirms it.
 
 ## Everything Banbo enforces
 
@@ -314,6 +328,7 @@ make test-sandbox    # 37 integration tests on a local NEAR node: payments, USDC
 make verify-build    # rebuild the wasm in Docker and check it matches the committed one
 make test-dashboard  # dashboard unit tests (formatting, origin labels, private-mode crypto)
 make test-tee-agent  # TEE agent tests, incl. the origin runtime: plan validation, DKIM labels, a fooled reader
+make test-mcp        # MCP server tests: amounts, key checks, labels the model can't set, refusals, wording
 ```
 
 The sandbox tests cover what unit tests can't: a real failed transfer and refund, `#[private]` enforcement, and an agent that holds only a function-call key failing to transfer NEAR or call admin methods.
@@ -343,6 +358,7 @@ demo/
   scripts/measure.mjs  gas and storage figures for the security review
   fixtures/          the poisoned invoice
 dashboard/           owner dashboard (Vite + React)
+mcp/                 MCP server: any MCP agent pays through the vault with a function-call key
 tee-agent/           agent for an Intel TDX VM (dstack): attests to the vault, NEAR AI private inference
   src/origin/        origin runtime (CaMeL): planner, quarantined reader, interpreter, DKIM/web sources
 scripts/
