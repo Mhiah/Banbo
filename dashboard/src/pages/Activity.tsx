@@ -211,7 +211,7 @@ function OriginBox({ item }: { item: ActivityItem }) {
       <dt>{label}</dt>
       <dd>
         <span className={`badge inline ${v.kind === 'owner' ? 'green' : 'amber'}`}>{v.kind === 'owner' ? 'From you' : 'From a document'}</span>{' '}
-        {originText(v)}
+        {v.kind === 'owner' ? 'your request, not a document' : originText(v)}
         {v.kind === 'source' && <div className="mono xs muted" title="sha256 of the exact message the agent read">sha256 {v.digest}</div>}
       </dd>
     </>

@@ -2,7 +2,7 @@
 
 Banbo pays only when it knows where a payment's recipient and amount came from.
 
-This builds on **CaMeL**, from *"Defeating Prompt Injections by Design"* by Edoardo Debenedetti, Ilia Shumailov, Tianqi Fan, Jamie Hayes, Nicholas Carlini, Daniel Fabian, Christoph Kern, Chongyang Shi, Andreas Terzis and Florian Tramèr (Google, Google DeepMind and ETH Zurich, 2025), [arXiv:2503.18813](https://arxiv.org/abs/2503.18813). The design is theirs. Banbo's contribution is enforcing its policy in a smart contract that holds the money, with the labels backed by an on-chain TEE attestation. Banbo is not affiliated with the authors or their institutions.
+This builds on **CaMeL**, from *"Defeating Prompt Injections by Design"* by Edoardo Debenedetti, Ilia Shumailov, Tianqi Fan, Jamie Hayes, Nicholas Carlini, Daniel Fabian, Christoph Kern, Chongyang Shi, Andreas Terzis and Florian Tramèr (Google, Google DeepMind and ETH Zurich, 2025), [arXiv:2503.18813](https://arxiv.org/abs/2503.18813). The design is theirs. Banbo's contribution is enforcing its policy in a smart contract that holds the money, with the labels backed by an on-chain TEE attestation (or, where there is no TEE, the owner's explicit vouch, recorded on each payment). Banbo is not affiliated with the authors or their institutions.
 
 ## The attack limits don't stop
 
