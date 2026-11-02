@@ -21,6 +21,12 @@ const FALLBACKS: Record<string, string[]> = {
 const working = new Map<string, string>();
 
 export const SANDBOX_API = import.meta.env.VITE_SANDBOX_API ?? 'http://localhost:3031';
+/** A public build (e.g. GitHub Pages): no local sandbox, no dev Demo page. */
+export const HOSTED = import.meta.env.VITE_HOSTED === '1';
+/** The vault a public build opens on testnet until the visitor picks another. */
+export const DEFAULT_VAULT: string = import.meta.env.VITE_DEFAULT_VAULT ?? '';
+/** Networks this build offers. */
+export const NETWORK_IDS: NetworkId[] = HOSTED ? ['testnet', 'mainnet'] : ['sandbox', 'testnet', 'mainnet'];
 
 // ------------------------------------------------------------------ types
 

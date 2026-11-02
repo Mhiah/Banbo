@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
-  NETWORKS, type NetworkId, type VaultState, type Writer, type SandboxConfig, type WalletHandle,
+  NETWORKS, NETWORK_IDS, DEFAULT_VAULT, type NetworkId, type VaultState, type Writer, type SandboxConfig, type WalletHandle,
   loadVault, sandboxConfig, sandboxWriter, wallet, walletWriter, prettyError, signUnlock,
 } from './near';
 import { keyPairFromPassphrase, keyPairFromSignature, unlockMessage, unlockNonce, type OwnerKeys } from './privacy';
@@ -15,9 +15,19 @@ const ls = {
 /** A pasted account id: no surrounding spaces, no trailing full stop. */
 export const cleanAccountId = (v: string) => v.trim().replace(/\.+$/, '');
 
+/** The network to open on: the last one used, if this build offers it. */
+function startNetwork(): NetworkId {
+  const saved = ls.get('network') as NetworkId;
+  return NETWORK_IDS.includes(saved) ? saved : NETWORK_IDS[0];
+}
+/** The vault last used on a network; a public build falls back to its demo vault on testnet. */
+function savedContract(n: NetworkId): string {
+  return ls.get(`contract:${n}`) || (n === 'testnet' ? DEFAULT_VAULT : '');
+}
+
 function useBanboState() {
-  const [network, setNetworkRaw] = useState<NetworkId>(() => (ls.get('network', 'sandbox') as NetworkId));
-  const [contractInput, setContractInput] = useState(() => ls.get(`contract:${ls.get('network', 'sandbox')}`));
+  const [network, setNetworkRaw] = useState<NetworkId>(startNetwork);
+  const [contractInput, setContractInput] = useState(() => savedContract(startNetwork()));
   const [sandbox, setSandbox] = useState<SandboxConfig | null>(null);
   const [sandboxDown, setSandboxDown] = useState(false);
   const [handle, setHandle] = useState<WalletHandle | null>(null);
@@ -42,7 +52,7 @@ function useBanboState() {
 
   const setNetwork = (n: NetworkId) => {
     ls.set('network', n);
-    setContractInput(ls.get(`contract:${n}`));
+    setContractInput(savedContract(n));
     setNetworkRaw(n);
   };
   const setContract = (v: string) => { setContractInput(v); ls.set(`contract:${network}`, cleanAccountId(v)); };

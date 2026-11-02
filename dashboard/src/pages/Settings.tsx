@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useBanbo } from '../state';
-import { NETWORKS, SANDBOX_API, type NetworkId } from '../near';
+import { NETWORKS, NETWORK_IDS, SANDBOX_API } from '../near';
 import { Panel, PageHeader, Addr, Dialog, ChangeSummary } from '../ui';
 import { short } from '../format';
 
@@ -13,7 +13,7 @@ export default function Settings() {
       <PageHeader title="Settings" subtitle="Choose the network and vault this dashboard manages." />
       <Panel title="Network">
         <div className="radio-list" role="radiogroup" aria-label="Network">
-          {(Object.keys(NETWORKS) as NetworkId[]).map((n) => (
+          {NETWORK_IDS.map((n) => (
             <label key={n} className={`radio ${b.network === n ? 'on' : ''}`}>
               <input type="radio" name="network" checked={b.network === n} onChange={() => b.setNetwork(n)} />
               <span className="radio-title">{n === 'sandbox' ? 'Local sandbox' : `NEAR ${NETWORKS[n].label}`}</span>

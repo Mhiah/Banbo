@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BanboProvider, useBanbo } from './state';
-import { NETWORKS } from './near';
+import { NETWORKS, HOSTED } from './near';
 import { short } from './format';
 import { Empty, Skeleton } from './ui';
 import Overview from './pages/Overview';
@@ -48,7 +48,7 @@ function Shell() {
   const [navOpen, setNavOpen] = useState(false);
   useEffect(() => setNavOpen(false), [route]);
 
-  const all = [...ROUTES, DEMO];
+  const all = HOSTED ? [...ROUTES] : [...ROUTES, DEMO];
   const current = all.find((r) => r.path === route) ?? ROUTES[0];
   const Page = current.el;
   const needsVault = current.path !== 'settings' && current.path !== 'demo';
@@ -76,10 +76,12 @@ function Shell() {
               )}
             </a>
           ))}
-          <div className="nav-sep" />
-          <a href="#/demo" className={current.path === 'demo' ? 'active' : ''} aria-current={current.path === 'demo' ? 'page' : undefined}>
-            Demo <span className="nav-tag">dev</span>
-          </a>
+          {!HOSTED && <>
+            <div className="nav-sep" />
+            <a href="#/demo" className={current.path === 'demo' ? 'active' : ''} aria-current={current.path === 'demo' ? 'page' : undefined}>
+              Demo <span className="nav-tag">dev</span>
+            </a>
+          </>}
         </nav>
         <div className="side-bottom">
           <div className={`net net-${b.network}`}>
