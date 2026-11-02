@@ -322,7 +322,7 @@ NEAR amounts are yoctoNEAR strings; token amounts are in the token's smallest un
 make test-contract   # 130 Rust unit tests (policy, invariants, callbacks, tokens, risk rules, private mode,
                      #   TEE checks incl. a genuine Intel TDX quote, expiry, recovery, owner controls, history,
                      #   task mandates and origin checks: labels, holds, refusals, vouching)
-make test-sandbox    # 37 integration tests on a local NEAR node: payments, USDC, the paid API, risk rules,
+make test-sandbox    # 44 integration tests on a local NEAR node: payments, USDC, the paid API, risk rules,
                      #   private mode, the TEE agent runtime against the contract, hardening, and the
                      #   origin runtime (planner/reader/interpreter) against the real contract
 make verify-build    # rebuild the wasm in Docker and check it matches the committed one
