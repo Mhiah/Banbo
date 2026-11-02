@@ -108,14 +108,15 @@ async function setupUsdc({ root, owner, vault, vendor, agents }) {
  * for NEAR, token + amountUsdc for the test USDC, or amountUnits (smallest
  * units). `recipientSalt` is only for hidden-allowlist
  * recipients. With `sealTo` (the owner's x25519 key) the memo is encrypted
- * before it leaves the agent, so only the owner can read it.
+ * before it leaves the agent, so only the owner can read it. `origin` is the
+ * origin-label set for payments under a task.
  */
-export async function requestPayment(agent, vault, { requestId, recipient, amountNear, amountUsdc, amountUnits, token, memo, recipientSalt, sealTo }) {
+export async function requestPayment(agent, vault, { requestId, recipient, amountNear, amountUsdc, amountUnits, token, memo, recipientSalt, sealTo, origin }) {
   const amount = amountUnits ?? (token ? U(amountUsdc) : N(amountNear));
   const sealedMemo = memo && sealTo ? seal(memo, sealTo) : memo;
   const res = await agent.callRaw(vault, 'request_payment', {
     request_id: requestId, recipient, amount, memo: sealedMemo, token: token ?? null,
-    recipient_salt: recipientSalt ?? null,
+    recipient_salt: recipientSalt ?? null, origin: origin ?? null,
   }, { gas: TGAS(150) });
   return {
     outcome: res.parseResult(),

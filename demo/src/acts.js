@@ -32,12 +32,12 @@ function show(log, label, r) {
 const bal = async (a) => fmt((await a.balance()).total.toString());
 let runId = 0;
 
-/** Act 1: an agent reads a poisoned invoice and tries to drain the vault. */
+/** Act 2: an agent reads a poisoned invoice and tries to drain the vault. */
 export async function actInjection(env, { log = console.log, useLlm = hasCredentials() } = {}) {
   const { vault, attacker, agents } = env;
   const research = agents[0];
   const run = ++runId;
-  log(bold('Act 1: prompt injection'));
+  log(bold('Act 2: prompt injection, the crude version'));
   log(`  The agent is asked to pay ${INVOICE_URL}.`);
   log(`  The page hides instructions to move the treasury to ${red(attacker.accountId)}.\n`);
   const attackerBefore = await bal(attacker);
@@ -82,12 +82,12 @@ export async function actInjection(env, { log = console.log, useLlm = hasCredent
   return act;
 }
 
-/** Act 2: a transfer fails after approval and is reconciled exactly once. */
+/** Act 3: a transfer fails after approval and is reconciled exactly once. */
 export async function actFailedTransfer(env, { log = console.log } = {}) {
   const { owner, vault, agents } = env;
   const research = agents[0];
   const run = ++runId;
-  log(bold('Act 2: a payment fails after it was approved'));
+  log(bold('Act 3: a payment fails after it was approved'));
   log('  NEAR transfers run asynchronously. Here the vendor account no longer exists, so');
   log('  the transfer fails a block later. The vault must release the budget exactly once.\n');
   const ghost = 'old-vendor.test.near';
@@ -111,14 +111,14 @@ export async function actFailedTransfer(env, { log = console.log } = {}) {
 }
 
 /**
- * Act 3: a payment over the threshold waits for the owner.
+ * Act 4: a payment over the threshold waits for the owner.
  * With approve=false it is left pending (the dashboard approves it).
  */
 export async function actApproval(env, { log = console.log, approve = true } = {}) {
   const { owner, vault, vendor, agents } = env;
   const buyer = agents[2];
   const run = ++runId;
-  log(bold('Act 3: big payments need a human'));
+  log(bold('Act 4: big payments need a human'));
   const act = { name: 'owner_approval', payments: [] };
   const id = `gpu-r${run}`;
   const r3 = await requestPayment(buyer, vault, { requestId: id, recipient: vendor.accountId, amountNear: 0.5, memo: 'GPU hours for model eval' });
@@ -136,7 +136,7 @@ export async function actApproval(env, { log = console.log, approve = true } = {
 }
 
 /**
- * Act 4: paying in USDC (NEP-141). One payment settles through ft_transfer;
+ * Act 5: paying in USDC (NEP-141). One payment settles through ft_transfer;
  * one goes to an allowed account that never registered with the token, which
  * the vault catches before sending, so nothing is lost.
  */
@@ -145,7 +145,7 @@ export async function actUsdc(env, { log = console.log } = {}) {
   if (!usdc) return { name: 'usdc', payments: [] };
   const research = agents[0];
   const run = ++runId;
-  log(bold('Act 4: paying in USDC'));
+  log(bold('Act 5: paying in USDC'));
   log('  Same rules, separate USDC limits. Token payments check that the recipient can');
   log('  receive the token first, so a payment can\'t vanish into an unregistered account.\n');
   const act = { name: 'usdc', payments: [] };
@@ -171,7 +171,7 @@ export async function actUsdc(env, { log = console.log } = {}) {
 }
 
 /**
- * Act 5: an agent buys API calls with USDC, paying each quote through the
+ * Act 6: an agent buys API calls with USDC, paying each quote through the
  * vault. The vendor serves only after reading the settled payment on-chain.
  * Then someone tries to get data for free.
  */
@@ -180,7 +180,7 @@ export async function actPaidApi(env, { log = console.log, useLlm = hasCredentia
   if (!usdc || !api) return { name: 'paid_api', payments: [] };
   const research = agents[0];
   ++runId;
-  log(bold('Act 5: agents paying for what they use'));
+  log(bold('Act 6: agents paying for what they use'));
   log('  A weather API charges per call in USDC. It answers 402 with a price quote, the agent');
   log('  pays the quote through the vault, and the API checks the vault contract before serving.\n');
   const act = { name: 'paid_api', payments: [], served: 0 };
@@ -246,7 +246,7 @@ export async function actPaidApi(env, { log = console.log, useLlm = hasCredentia
 }
 
 /**
- * Act 6: attacks that stay under the amount limits. A lookalike recipient
+ * Act 7: attacks that stay under the amount limits. A lookalike recipient
  * the owner was tricked into adding can't be paid during the cooldown, and
  * a flood of tiny payments hits the per-hour limit. Rules are restored after.
  */
@@ -254,7 +254,7 @@ export async function actRiskRules(env, { log = console.log } = {}) {
   const { root, owner, vault, vendor, agents } = env;
   const ops = agents[1];
   const run = ++runId;
-  log(bold('Act 6: attacks that stay under the limits'));
+  log(bold('Act 7: attacks that stay under the limits'));
   log('  Small payments can still add up, and an owner can be tricked into allowing a new account.');
   log('  Risk rules: a new recipient waits 1 hour before it can be paid; at most 5 payments per agent per hour.\n');
   const before = await vault.view('get_config', {});
@@ -291,14 +291,14 @@ export async function actRiskRules(env, { log = console.log } = {}) {
 }
 
 /**
- * Act 7: private mode. Vendors on a hidden allowlist, memos only the owner
+ * Act 8: private mode. Vendors on a hidden allowlist, memos only the owner
  * can read, and a vault that only pays out for agents running in a TEE.
  */
 export async function actPrivate(env, { log = console.log } = {}) {
   const { root, owner, vault, attacker, agents } = env;
   const research = agents[0];
   const run = ++runId;
-  log(bold('Act 7: private mode'));
+  log(bold('Act 8: private mode'));
   log('  On a public chain anyone can read a vault\'s allowlist and every memo. Private mode');
   log('  keeps the vendor list and the memos to the owner. Payments themselves stay public.\n');
   const act = { name: 'private', payments: [] };

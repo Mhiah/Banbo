@@ -8,8 +8,8 @@ export type NetworkId = 'sandbox' | 'testnet' | 'mainnet';
 
 export const NETWORKS: Record<NetworkId, { label: string; nodeUrl: string; explorer?: string }> = {
   sandbox: { label: 'Local sandbox', nodeUrl: '' },
-  testnet: { label: 'Testnet', nodeUrl: 'https://rpc.testnet.near.org', explorer: 'https://testnet.nearblocks.io' },
-  mainnet: { label: 'Mainnet', nodeUrl: 'https://rpc.mainnet.near.org', explorer: 'https://nearblocks.io' },
+  testnet: { label: 'Testnet', nodeUrl: 'https://rpc.testnet.fastnear.com', explorer: 'https://testnet.nearblocks.io' },
+  mainnet: { label: 'Mainnet', nodeUrl: 'https://rpc.mainnet.fastnear.com', explorer: 'https://nearblocks.io' },
 };
 
 export const SANDBOX_API = import.meta.env.VITE_SANDBOX_API ?? 'http://localhost:3031';
@@ -24,6 +24,29 @@ export interface Agent {
   period_index: number;
   spent: string;
   reserved: string;
+}
+/** Where a value came from, as labelled by the agent's origin runtime. */
+export type Origin = { kind: 'owner' } | { kind: 'source'; source: string; digest: string };
+export interface PaymentOrigin {
+  task_id: string;
+  recipient: Origin;
+  amount: Origin;
+}
+/** A job the owner gave an agent (origin-checked payments). */
+export interface Task {
+  id: string;
+  agent: string;
+  description: string;
+  payees: string[];
+  token: string | null;
+  budget: string;
+  max_per_payment: string;
+  trusted_sources: string[];
+  spent: string;
+  reserved: string;
+  created_at_ms: number;
+  expires_at_ms: number;
+  closed: boolean;
 }
 export type Status = 'PendingApproval' | 'InFlight' | 'Settled' | 'Failed' | 'Declined' | 'Expired';
 export interface PaymentRequest {
@@ -45,6 +68,12 @@ export interface PaymentRequest {
   /** Pending approvals: the owner must decide before this time. */
   expires_at_ms: number | null;
   seq: number;
+  /** Origin labels, for payments made under a task. */
+  origin?: PaymentOrigin | null;
+  /** over_approval_threshold or amount_from_untrusted_source */
+  hold_reason?: string | null;
+  /** "tee" or "owner_vouched" */
+  label_trust?: string | null;
 }
 export interface BlockedAttempt {
   agent: string;
@@ -55,6 +84,7 @@ export interface BlockedAttempt {
   reason: string;
   memo: string;
   at_ms: number;
+  origin?: PaymentOrigin | null;
 }
 export interface Limits {
   per_tx_max: string;
@@ -110,6 +140,7 @@ export interface Config {
   history_limit: number;
   in_flight_recovery_ms: number;
   open_payments: number;
+  require_origin: boolean;
 }
 export interface HiddenRecipient {
   fingerprint: string;
@@ -167,6 +198,9 @@ export interface VaultState {
   tee: TeePolicy;
   /** agent → its accepted attestation */
   agentTee: Record<string, TeeInfo>;
+  tasks: Task[];
+  /** Agents whose origin labels the owner vouches for without a TEE. */
+  vouched: string[];
 }
 
 export function assetOf(state: Pick<VaultState, 'tokens'>, token: string | null | undefined): Asset {
@@ -205,7 +239,7 @@ export async function view<T>(nodeUrl: string, contractId: string, method: strin
 
 export async function loadVault(nodeUrl: string, contractId: string): Promise<VaultState> {
   const v = <T,>(m: string, a: object = {}) => view<T>(nodeUrl, contractId, m, a);
-  const [config, balances, agents, allowlist, recent, open, blocked, blockedCount, tokens, recipients, hidden, tee, teeList] = await Promise.all([
+  const [config, balances, agents, allowlist, recent, open, blocked, blockedCount, tokens, recipients, hidden, tee, teeList, tasks, vouched] = await Promise.all([
     v<Config>('get_config'),
     v<Balances>('get_balances'),
     v<[string, Agent][]>('list_agents'),
@@ -220,6 +254,8 @@ export async function loadVault(nodeUrl: string, contractId: string): Promise<Va
     v<HiddenRecipient[]>('list_hidden_recipients'),
     v<TeePolicy>('get_tee_policy'),
     v<[string, TeeInfo][]>('list_agent_tee'),
+    v<Task[]>('list_tasks'),
+    v<string[]>('list_vouched'),
   ]);
   const agentTee: Record<string, TeeInfo> = Object.fromEntries(teeList);
   const seen = new Set(recent.map((r) => r.key));
@@ -232,7 +268,7 @@ export async function loadVault(nodeUrl: string, contractId: string): Promise<Va
     const lists = await Promise.all(agents.map(([id]) => v<[string, Limits][]>('get_agent_token_limits', { agent: id })));
     agents.forEach(([id], i) => (tokenLimits[id] = lists[i]));
   }
-  return { config, balances, agents, allowlist, requests, blocked, blockedCount, tokens, tokenLimits, recipients, rates, hidden, tee, agentTee };
+  return { config, balances, agents, allowlist, requests, blocked, blockedCount, tokens, tokenLimits, recipients, rates, hidden, tee, agentTee, tasks, vouched };
 }
 
 // ------------------------------------------------------------------ writes

@@ -59,7 +59,7 @@ fn setup() -> Banbo {
 
 fn pay(c: &mut Banbo, id: &str, yocto: u128, ts_ms: u64) -> RequestOutcome {
     ctx(agent(), ts_ms);
-    c.request_payment(id.into(), vendor(), U128(yocto), None, None, None)
+    c.request_payment(id.into(), vendor(), U128(yocto), None, None, None, None)
 }
 
 fn key(id: &str) -> String {
@@ -244,7 +244,7 @@ fn a_reconciled_token_payment_that_did_not_go_through_returns_to_the_balance() {
     ctx(usdc(), T0);
     let _ = c.ft_on_transfer(owner(), U128(100 * USDC), String::new());
     ctx(agent(), T0);
-    c.request_payment("t".into(), vendor(), U128(5 * USDC), None, Some(usdc()), None);
+    c.request_payment("t".into(), vendor(), U128(5 * USDC), None, Some(usdc()), None, None);
     let bal = |c: &Banbo| c.list_tokens()[0].balance.0;
     assert_eq!(bal(&c), 95 * USDC);
     ctx(owner(), T0 + IN_FLIGHT_RECOVERY_MS);
@@ -295,7 +295,7 @@ fn removing_an_agent_deletes_its_token_limits_and_checks_their_reservations() {
     ctx(usdc(), T0);
     let _ = c.ft_on_transfer(owner(), U128(100 * USDC), String::new());
     ctx(agent(), T0);
-    c.request_payment("t".into(), vendor(), U128(5 * USDC), None, Some(usdc()), None);
+    c.request_payment("t".into(), vendor(), U128(5 * USDC), None, Some(usdc()), None, None);
     ctx(owner(), T0);
     assert!(panics(|| c.remove_agent(agent())).contains("pending or in flight"));
     callback(true, T0 + 1);
@@ -307,7 +307,7 @@ fn removing_an_agent_deletes_its_token_limits_and_checks_their_reservations() {
     c.add_agent(agent(), U128(NEAR), U128(10 * NEAR), U128(NEAR / 2));
     ctx(agent(), T0 + 3);
     assert_eq!(
-        c.request_payment("t2".into(), vendor(), U128(USDC), None, Some(usdc()), None),
+        c.request_payment("t2".into(), vendor(), U128(USDC), None, Some(usdc()), None, None),
         RequestOutcome::Rejected { reason: "token_not_enabled_for_agent".into() }
     );
 }

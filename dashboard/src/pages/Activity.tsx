@@ -2,7 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { open as openSealed, isSealed } from '../privacy';
 import { useBanbo } from '../state';
 import { activity, STATUS, type ActivityItem, type Kind } from '../activity';
-import { near, ago, until, duration, reasonText, short } from '../format';
+import { near, ago, until, duration, reasonText, short, originText } from '../format';
 import { Panel, PageHeader, StatusBadge, Addr, Amount, Empty, Drawer, Dialog } from '../ui';
 import type { PaymentRequest } from '../near';
 
@@ -35,6 +35,16 @@ const POLICY: Record<string, string> = {
   attestation_expired: 'TEE attestation lifetime',
   agent_measurement_not_approved: 'Approved agent images',
   too_many_open_payments: 'Open payments limit',
+  origin_required: 'Origin labels required',
+  task_not_found: 'Task',
+  task_not_for_agent: 'Task',
+  task_closed: 'Task',
+  task_expired: 'Task end time',
+  task_token_mismatch: 'Task asset',
+  recipient_from_untrusted_source: 'Origin check: recipient must come from you',
+  recipient_not_in_task: 'Task payees',
+  exceeds_task_max_per_payment: 'Task max per payment',
+  exceeds_task_budget: 'Task budget',
 };
 
 const LONG_REASON: Record<string, string> = {
@@ -58,6 +68,16 @@ const LONG_REASON: Record<string, string> = {
   agent_measurement_not_approved: 'This payment was rejected because the agent attested with an image you’ve since removed from the approved list.',
   too_many_open_payments: 'This payment was rejected because too many payments were already waiting for approval or for their transfer result (the vault allows 100 at once).',
   reconciled_by_owner: 'The transfer’s result never came back, so you marked it as not sent. The reservation was released and, for a token, the amount was put back in the vault’s balance.',
+  recipient_from_untrusted_source: 'Refused: the agent took this recipient from a document (an email, page or file) instead of from you. Under a task, only you decide who gets paid, so a forged “we changed banks” message can’t redirect money.',
+  recipient_not_in_task: 'Refused: this recipient isn’t one of the payees you set for the task, even though it may be an approved vendor.',
+  exceeds_task_max_per_payment: 'Refused: larger than the task’s maximum per payment.',
+  exceeds_task_budget: 'Refused: this would take the task over its budget.',
+  task_closed: 'Refused: the task was closed.',
+  task_expired: 'Refused: the task’s end time has passed.',
+  task_not_for_agent: 'Refused: the task belongs to a different agent.',
+  task_not_found: 'Refused: the payment named a task that doesn’t exist.',
+  task_token_mismatch: 'Refused: the task is for a different asset.',
+  origin_required: 'Refused: the vault requires origin labels on every payment, and this one had none.',
 };
 
 const Lock = () => (
@@ -150,8 +170,14 @@ function Detail({ item, memo }: { item: ActivityItem; memo: ReactNode }) {
       <div className="detail-amount"><Amount yocto={item.amount} asset={item.asset} strong /></div>
       <div className="detail-status"><StatusBadge kind={item.kind} /></div>
       <p className={`detail-explain ${item.kind === 'blocked' ? 'red' : ''}`}>
-        {item.reason ? (LONG_REASON[item.reason] ?? reasonText(item.reason)) : st.help}
+        {item.reason ? (LONG_REASON[item.reason] ?? reasonText(item.reason))
+          : item.kind === 'PendingApproval' && item.holdReason === 'amount_from_untrusted_source'
+            ? `Held: the agent read this amount in ${originText(item.origin?.amount)}, which you haven’t marked as trusted for this task. Check that message before you approve.`
+            : item.kind === 'PendingApproval' && item.holdReason === 'over_approval_threshold'
+              ? 'Over the agent’s approval threshold. Funds are reserved until you approve or decline.'
+              : st.help}
       </p>
+      {item.origin && <OriginBox item={item} />}
       <dl className="kv">
         <dt>Agent</dt><dd><Addr id={item.agent} explorer={b.explorer} full /></dd>
         <dt>Recipient</dt><dd><Addr id={item.recipient} explorer={b.explorer} full />{item.hidden && <span className="badge gray inline">Hidden vendor</span>}</dd>
@@ -174,6 +200,32 @@ function Detail({ item, memo }: { item: ActivityItem; memo: ReactNode }) {
         <pre>{JSON.stringify(item.raw, null, 2)}</pre>
       </details>
     </>
+  );
+}
+
+/** Where the recipient and the amount came from, as the contract recorded it. */
+function OriginBox({ item }: { item: ActivityItem }) {
+  const o = item.origin!;
+  const row = (label: string, v: typeof o.recipient) => (
+    <>
+      <dt>{label}</dt>
+      <dd>
+        <span className={`badge inline ${v.kind === 'owner' ? 'green' : 'amber'}`}>{v.kind === 'owner' ? 'From you' : 'From a document'}</span>{' '}
+        {v.kind === 'owner' ? 'your request, not a document' : originText(v)}
+        {v.kind === 'source' && <div className="mono xs muted" title="sha256 of the exact message the agent read">sha256 {v.digest}</div>}
+      </dd>
+    </>
+  );
+  return (
+    <div className="origin-box">
+      <div className="origin-title">Where this payment came from</div>
+      <dl className="kv">
+        <dt>Task</dt><dd className="mono"><a className="link" href="#/tasks">{o.task_id}</a></dd>
+        {row('Recipient', o.recipient)}
+        {row('Amount', o.amount)}
+        {item.labelTrust && <><dt>Labels from</dt><dd>{item.labelTrust === 'tee' ? 'A verified TEE agent (Intel TDX, checked on-chain)' : 'An agent you vouch for (no TEE proof)'}</dd></>}
+      </dl>
+    </div>
   );
 }
 

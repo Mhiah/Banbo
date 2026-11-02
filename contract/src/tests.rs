@@ -58,7 +58,7 @@ fn setup() -> Banbo {
 
 fn pay(c: &mut Banbo, n: u8, id: &str, to: AccountId, yocto: u128) -> RequestOutcome {
     ctx(agent(n), 10, 2_000);
-    c.request_payment(id.into(), to, U128(yocto), None, None, None)
+    c.request_payment(id.into(), to, U128(yocto), None, None, None, None)
 }
 
 fn assert_invariant(c: &Banbo) {
@@ -114,7 +114,7 @@ fn injected_drain_to_allowlisted_vendor_is_capped() {
 fn unknown_caller_cannot_spend() {
     let mut c = setup();
     ctx(attacker(), 10, 2_000);
-    let out = c.request_payment("x".into(), vendor(), U128(NEAR / 10), None, None, None);
+    let out = c.request_payment("x".into(), vendor(), U128(NEAR / 10), None, None, None, None);
     assert_eq!(out, RequestOutcome::Rejected { reason: "unknown_agent".into() });
 }
 
@@ -136,7 +136,7 @@ fn blocked_log_is_bounded_and_newest_first() {
 fn unknown_callers_are_not_logged() {
     let mut c = setup();
     ctx(attacker(), 10, 2_000);
-    c.request_payment("x".into(), vendor(), U128(NEAR / 10), None, None, None);
+    c.request_payment("x".into(), vendor(), U128(NEAR / 10), None, None, None, None);
     assert_eq!(c.blocked_count(), 0);
 }
 
@@ -145,7 +145,7 @@ fn long_memos_are_truncated_in_the_log() {
     let mut c = setup();
     ctx(agent(1), 10, 2_000);
     let memo = "é".repeat(100); // 200 bytes, multi-byte chars
-    c.request_payment("m".into(), attacker(), U128(NEAR), Some(memo), None, None);
+    c.request_payment("m".into(), attacker(), U128(NEAR), Some(memo), None, None, None);
     let b = &c.list_blocked(None)[0];
     assert!(b.memo.len() <= 80);
     assert!(b.memo.chars().all(|ch| ch == 'é'));
@@ -342,7 +342,7 @@ fn vault_balance_is_respected() {
     c.add_agent(agent(1), U128(NEAR), U128(3 * NEAR), U128(NEAR));
     c.allow_recipient(vendor());
     ctx(agent(1), 1, 2_000);
-    let out = c.request_payment("big".into(), vendor(), U128(6 * NEAR / 10), None, None, None);
+    let out = c.request_payment("big".into(), vendor(), U128(6 * NEAR / 10), None, None, None, None);
     assert_eq!(out, RequestOutcome::Rejected { reason: "insufficient_vault_balance".into() });
 }
 
@@ -414,7 +414,7 @@ fn setup_usdc() -> Banbo {
 
 fn pay_usdc(c: &mut Banbo, n: u8, id: &str, to: AccountId, amount: u128) -> RequestOutcome {
     ctx(agent(n), 10, 2_000);
-    c.request_payment(id.into(), to, U128(amount), None, Some(usdc()), None)
+    c.request_payment(id.into(), to, U128(amount), None, Some(usdc()), None, None)
 }
 
 fn token(c: &Banbo) -> TokenView {
@@ -440,7 +440,7 @@ fn deposits_only_count_from_added_tokens() {
 fn token_payment_needs_supported_token_and_agent_limits() {
     let mut c = setup_usdc();
     ctx(agent(1), 10, 2_000);
-    let out = c.request_payment("t0".into(), vendor(), U128(USDC), None, Some("other.testnet".parse().unwrap()), None);
+    let out = c.request_payment("t0".into(), vendor(), U128(USDC), None, Some("other.testnet".parse().unwrap()), None, None);
     assert_eq!(out, RequestOutcome::Rejected { reason: "token_not_supported".into() });
     let out = pay_usdc(&mut c, 2, "t1", vendor(), USDC);
     assert_eq!(out, RequestOutcome::Rejected { reason: "token_not_enabled_for_agent".into() });
@@ -590,7 +590,7 @@ fn only_owner_configures_tokens() {
 
 fn pay_at(c: &mut Banbo, n: u8, id: &str, to: AccountId, yocto: u128, ts: u64) -> RequestOutcome {
     ctx(agent(n), 10, ts);
-    c.request_payment(id.into(), to, U128(yocto), None, None, None)
+    c.request_payment(id.into(), to, U128(yocto), None, None, None, None)
 }
 
 fn newcomer() -> AccountId {

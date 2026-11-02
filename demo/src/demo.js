@@ -1,5 +1,5 @@
 // One-command demo: starts a local NEAR node, deploys Banbo and runs
-// seven acts. Every payment below is a real transaction against the contract.
+// eight acts. Every payment below is a real transaction against the contract.
 //
 //   npm run demo              # uses Claude if ANTHROPIC_API_KEY is set, else scripted agent
 //   npm run demo -- --scripted
@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { setupVault, fmt, fmtU } from './vault.js';
 import { hasCredentials, MODEL } from './agent.js';
 import { startPaidApi } from './paid-api.js';
+import { actInvoiceFraud } from './act-origin.js';
 import { actInjection, actFailedTransfer, actApproval, actUsdc, actPaidApi, actRiskRules, actPrivate, bold, cyan, dim } from './acts.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -28,6 +29,7 @@ async function main() {
   try {
     log(`  vault ${cyan(vault.accountId)} holds ${fmt((await vault.balance()).total.toString())} NEAR`);
     log(`  policy: allowlist = [${(await vault.view('list_allowlist', {})).join(', ')}], 0.5 NEAR per request, 3 NEAR/agent/day, 5 NEAR shared/day\n`);
+    report.acts.push(await actInvoiceFraud(env, { log, useLlm }));
     report.acts.push(await actInjection(env, { log, useLlm }));
     report.acts.push(await actFailedTransfer(env, { log }));
     report.acts.push(await actApproval(env, { log }));

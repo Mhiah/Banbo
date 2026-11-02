@@ -25,14 +25,15 @@ export async function openVault({ networkId, nodeUrl, vaultId, accountId, keyPai
     /**
      * Pay through the vault. The memo is always sealed to the owner when the
      * vault has a key; the salt comes from runtime config, never from the model.
+     * `origin` is the label set from the origin runtime (see src/origin/).
      */
-    async requestPayment({ requestId, recipient, amount, token = null, memo = '', salts = {} }) {
+    async requestPayment({ requestId, recipient, amount, token = null, memo = '', salts = {}, origin = null }) {
       const cfg = await view('get_config');
       const sealed = memo && cfg.owner_encryption_key ? seal(memo, cfg.owner_encryption_key) : memo;
       const r = await account.functionCall({
         contractId: vaultId,
         methodName: 'request_payment',
-        args: { request_id: requestId, recipient, amount, memo: sealed, token, recipient_salt: salts[recipient] ?? null },
+        args: { request_id: requestId, recipient, amount, memo: sealed, token, recipient_salt: salts[recipient] ?? null, origin },
         gas: TGAS(150),
       });
       const raw = r.status?.SuccessValue;

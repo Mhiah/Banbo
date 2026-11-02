@@ -19,6 +19,15 @@
 //! inside a TEE (see `tee.rs`). Amounts and recipients of payments that are
 //! actually made stay public, as on any public chain.
 //!
+//! Origin-checked payments (see docs/ORIGIN_CHECKS.md) apply the CaMeL
+//! design from "Defeating Prompt Injections by Design" (Debenedetti et al.,
+//! Google, Google DeepMind and ETH Zurich, 2025) on-chain. The owner opens a
+//! task with its payees, budget and trusted sources. An attested agent
+//! runtime labels where each payment's recipient and amount came from, and
+//! the contract pays only when the recipient was set by the owner and the
+//! amount came from the owner or a source the owner trusts for that task.
+//! Anything else is refused or held for the owner, with its source.
+//!
 //! Core invariant, per agent and for the shared treasury, per asset, in the
 //! current period:
 //!     spent + reserved <= limit
@@ -80,6 +89,13 @@ const MAX_REQUEST_ID_LEN: usize = 64;
 /// Blocked attempts kept on-chain for the dashboard (oldest overwritten).
 const BLOCKED_LOG_SIZE: u32 = 50;
 const BLOCKED_MEMO_LEN: usize = 80;
+/// Most tasks stored at once (open or closed); closed ones can be removed.
+const MAX_TASKS: u32 = 100;
+const MAX_TASK_ID_LEN: usize = 64;
+const MAX_TASK_PAYEES: usize = 10;
+const MAX_TASK_SOURCES: usize = 10;
+const MAX_SOURCE_LEN: usize = 100;
+const MAX_TASK_DESCRIPTION_LEN: usize = 256;
 
 #[derive(BorshStorageKey)]
 #[near]
@@ -98,6 +114,8 @@ enum StorageKey {
     Tee,
     History,
     Open,
+    Tasks,
+    Vouched,
 }
 
 /// A hidden allowlist entry. Only the fingerprint
@@ -273,6 +291,14 @@ pub struct PaymentRequest {
     pub expires_at_ms: Option<u64>,
     /// Position in the payment history.
     pub seq: u64,
+    /// Origin labels, for payments made under a task.
+    pub origin: Option<PaymentOrigin>,
+    /// Why a payment waits for the owner: over_approval_threshold or
+    /// amount_from_untrusted_source.
+    pub hold_reason: Option<String>,
+    /// Why the labels were believed: "tee" (valid attestation) or
+    /// "owner_vouched".
+    pub label_trust: Option<String>,
 }
 
 /// A rejected payment attempt, kept in a fixed-size ring buffer so the owner
@@ -290,6 +316,57 @@ pub struct BlockedAttempt {
     /// Truncated to 80 bytes (encrypted memos are kept whole).
     pub memo: String,
     pub at_ms: u64,
+    /// The origin labels the agent sent, so the owner sees which source tried it.
+    pub origin: Option<PaymentOrigin>,
+}
+
+/// Where a value in a payment request came from, as labelled by the agent's
+/// attested runtime (the CaMeL "capability" of the value).
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Origin {
+    /// Taken from the owner's own instructions or from the task itself.
+    Owner,
+    /// Extracted from untrusted content. `source` names it, e.g.
+    /// "email:acme.com" (domain of a DKIM-verified sender) or "web:acme.com";
+    /// `digest` is the sha256 (hex) of the content, so the owner can match
+    /// the exact message.
+    Source { source: String, digest: String },
+}
+
+/// The origin labels an attested agent sends with a payment.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PaymentOrigin {
+    pub task_id: String,
+    pub recipient: Origin,
+    pub amount: Origin,
+}
+
+/// A job the owner gives an agent: who may be paid, how much in total and
+/// per payment, until when, and which untrusted sources may set an amount.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Debug, PartialEq)]
+pub struct Task {
+    pub id: String,
+    pub agent: AccountId,
+    pub description: String,
+    /// The only recipients this task can pay. Set by the owner, so they are
+    /// owner-origin by construction.
+    pub payees: Vec<AccountId>,
+    /// NEP-141 token, or None for native NEAR.
+    pub token: Option<AccountId>,
+    pub budget: U128,
+    pub max_per_payment: U128,
+    /// Sources allowed to set an amount without the owner's review, e.g.
+    /// "email:acme.com". Recipients can never come from a source.
+    pub trusted_sources: Vec<String>,
+    pub spent: U128,
+    pub reserved: U128,
+    pub created_at_ms: u64,
+    pub expires_at_ms: u64,
+    pub closed: bool,
 }
 
 /// What `request_payment` tells the agent. Rejections are returned (and logged
@@ -329,6 +406,8 @@ pub struct Config {
     /// How long a payment must be in flight before the owner may reconcile it.
     pub in_flight_recovery_ms: u64,
     pub open_payments: u32,
+    /// Every payment must carry origin labels from an attested agent.
+    pub require_origin: bool,
 }
 
 #[near(serializers = [json])]
@@ -393,6 +472,14 @@ pub struct Banbo {
     tee_measurements: IterableMap<String, TeeMeasurement>,
     tee_ppids: IterableSet<String>,
     tee: LookupMap<AccountId, TeeInfo>,
+    tasks: IterableMap<String, Task>,
+    /// Agents whose origin labels the owner vouches for without a TEE
+    /// attestation (e.g. a runtime on the owner's own server, or a local
+    /// demo). Weaker than attestation, and recorded as such on each payment.
+    vouched: IterableSet<AccountId>,
+    /// When on, every payment must come from an attested agent, under a task,
+    /// with origin labels.
+    require_origin: bool,
 }
 
 /// sha256("banbo-recipient-v1:" + account + ":" + salt), hex. The salt is
@@ -446,6 +533,30 @@ fn esc_token(t: &Option<AccountId>) -> String {
     t.as_ref().map(|t| esc(t.as_str())).unwrap_or_else(|| "null".into())
 }
 
+/// "kind:name" with kind email|web|doc|api and a short printable name.
+fn valid_source(s: &str) -> bool {
+    let Some((kind, name)) = s.split_once(':') else { return false };
+    matches!(kind, "email" | "web" | "doc" | "api")
+        && !name.is_empty()
+        && s.len() <= MAX_SOURCE_LEN
+        && name.bytes().all(|b| b.is_ascii_graphic())
+}
+
+fn valid_origin(o: &Origin) -> bool {
+    match o {
+        Origin::Owner => true,
+        Origin::Source { source, digest } => {
+            valid_source(source)
+                && digest.len() == 64
+                && digest.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        }
+    }
+}
+
+fn origin_json(o: &Option<PaymentOrigin>) -> String {
+    o.as_ref().map(|o| near_sdk::serde_json::to_string(o).unwrap()).unwrap_or_else(|| "null".into())
+}
+
 fn limits_key(agent: &AccountId, token: &AccountId) -> String {
     format!("{}|{}", agent, token)
 }
@@ -496,6 +607,9 @@ impl Banbo {
             tee_measurements: IterableMap::new(StorageKey::TeeMeasurements),
             tee_ppids: IterableSet::new(StorageKey::TeePpids),
             tee: LookupMap::new(StorageKey::Tee),
+            tasks: IterableMap::new(StorageKey::Tasks),
+            vouched: IterableSet::new(StorageKey::Vouched),
+            require_origin: false,
         }
     }
 
@@ -648,6 +762,7 @@ impl Banbo {
         self.agents.remove(&agent);
         self.rate.remove(&agent);
         self.tee.remove(&agent);
+        self.vouched.remove(&agent);
         event("agent_removed", format!("{{\"agent\":{}}}", esc(agent.as_str())));
     }
 
@@ -1008,6 +1123,10 @@ impl Banbo {
             None => self.allowlist.contains(&req.recipient),
         };
         require!(still_allowed, "recipient no longer allowlisted");
+        if let Some(o) = &req.origin {
+            let open = self.tasks.get(&o.task_id).is_some_and(|t| !t.closed);
+            require!(open, "task is closed");
+        }
         self.adjust_pending(&req.token, req.amount.0, false);
         req.status = Status::InFlight;
         req.dispatched_at_ms = Some(env::block_timestamp_ms());
@@ -1061,12 +1180,143 @@ impl Banbo {
         }
     }
 
+    // ----------------------------------------------------------------- tasks
+
+    /// Owner opens a task for an agent. Its payees are the only accounts the
+    /// task can pay, and each must also be on the allowlist when paid.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_task(
+        &mut self,
+        id: String,
+        agent: AccountId,
+        description: String,
+        payees: Vec<AccountId>,
+        token: Option<AccountId>,
+        budget: U128,
+        max_per_payment: U128,
+        trusted_sources: Vec<String>,
+        expires_at_ms: u64,
+    ) -> Task {
+        self.assert_owner();
+        require!(
+            !id.is_empty()
+                && id.len() <= MAX_TASK_ID_LEN
+                && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.'),
+            "bad task id: 1-64 of a-z A-Z 0-9 - _ ."
+        );
+        require!(!self.tasks.contains_key(&id), "task id already used");
+        require!(self.tasks.len() < MAX_TASKS, "too many tasks: remove closed ones first");
+        require!(self.agents.contains_key(&agent), "unknown agent");
+        let enc = is_encrypted(&description);
+        require!(
+            description.len() <= if enc { MAX_ENC_LEN } else { MAX_TASK_DESCRIPTION_LEN },
+            "description too long"
+        );
+        require!(!payees.is_empty() && payees.len() <= MAX_TASK_PAYEES, "a task needs 1-10 payees");
+        let mut seen = std::collections::BTreeSet::new();
+        for p in &payees {
+            require!(seen.insert(p.clone()), "duplicate payee");
+            require!(p != &agent && p != &env::current_account_id(), "payee not allowed");
+        }
+        require!(trusted_sources.len() <= MAX_TASK_SOURCES, "at most 10 trusted sources");
+        for src in &trusted_sources {
+            require!(valid_source(src), "bad trusted source: use kind:name, e.g. email:acme.com");
+            // The runtime labels mail that fails DKIM as email:unverified.
+            require!(!src.ends_with(":unverified"), "an unverified source can't be trusted");
+        }
+        if let Some(t) = &token {
+            require!(self.tokens.contains_key(t), "token not supported");
+        }
+        require!(budget.0 > 0, "budget must be > 0");
+        require!(max_per_payment.0 > 0 && max_per_payment.0 <= budget.0, "max_per_payment must be 1..=budget");
+        let now = env::block_timestamp_ms();
+        require!(expires_at_ms > now, "task must end in the future");
+        let task = Task {
+            id: id.clone(),
+            agent,
+            description,
+            payees,
+            token,
+            budget,
+            max_per_payment,
+            trusted_sources,
+            spent: U128(0),
+            reserved: U128(0),
+            created_at_ms: now,
+            expires_at_ms,
+            closed: false,
+        };
+        self.tasks.insert(id.clone(), task.clone());
+        event(
+            "task_created",
+            format!(
+                "{{\"task_id\":{},\"agent\":{},\"budget\":\"{}\",\"token\":{},\"expires_at_ms\":{}}}",
+                esc(&id),
+                esc(task.agent.as_str()),
+                task.budget.0,
+                esc_token(&task.token),
+                task.expires_at_ms
+            ),
+        );
+        task
+    }
+
+    /// Owner ends a task early. Payments already sent still settle against
+    /// it; no new ones are accepted.
+    pub fn close_task(&mut self, id: String) {
+        self.assert_owner();
+        let t = self.tasks.get_mut(&id).unwrap_or_else(|| env::panic_str("unknown task"));
+        require!(!t.closed, "task already closed");
+        t.closed = true;
+        event("task_closed", format!("{{\"task_id\":{}}}", esc(&id)));
+    }
+
+    /// Owner deletes a closed or expired task that has nothing in flight.
+    pub fn remove_task(&mut self, id: String) {
+        self.assert_owner();
+        let t = self.tasks.get(&id).unwrap_or_else(|| env::panic_str("unknown task"));
+        require!(t.closed || env::block_timestamp_ms() >= t.expires_at_ms, "close the task first");
+        require!(t.reserved.0 == 0, "task still has payments open");
+        self.tasks.remove(&id);
+        event("task_removed", format!("{{\"task_id\":{}}}", esc(&id)));
+    }
+
+    /// Owner vouches for (or stops vouching for) an agent's origin labels
+    /// without a TEE attestation. Every payment records which applied.
+    pub fn set_label_vouch(&mut self, agent: AccountId, vouched: bool) {
+        self.assert_owner();
+        if vouched {
+            require!(self.agents.contains_key(&agent), "unknown agent");
+            self.vouched.insert(agent.clone());
+        } else {
+            self.vouched.remove(&agent);
+        }
+        event("label_vouch", format!("{{\"agent\":{},\"vouched\":{}}}", esc(agent.as_str()), vouched));
+    }
+
+    /// Owner turns origin checks on for every payment. Needs a way to trust
+    /// labels: an approved TEE measurement or a vouched agent.
+    pub fn set_origin_policy(&mut self, require_origin: bool) {
+        self.assert_owner();
+        if require_origin {
+            require!(
+                !self.tee_measurements.is_empty() || !self.vouched.is_empty(),
+                "approve a TEE measurement or vouch for an agent first"
+            );
+        }
+        self.require_origin = require_origin;
+        event("origin_policy", format!("{{\"require_origin\":{}}}", require_origin));
+    }
+
     // ------------------------------------------------------------ agent entry
 
     /// The only method an agent can call. Intended to be reachable only
     /// through a function-call access key restricted to this method, so a
     /// compromised agent cannot move funds any other way.
     /// `recipient_salt` is only for recipients on the hidden allowlist.
+    /// `origin` carries the attested runtime's labels for payments under a
+    /// task (see `check_origin`).
+    #[allow(clippy::too_many_arguments)]
     pub fn request_payment(
         &mut self,
         request_id: String,
@@ -1075,12 +1325,19 @@ impl Banbo {
         memo: Option<String>,
         token: Option<AccountId>,
         recipient_salt: Option<String>,
+        origin: Option<PaymentOrigin>,
     ) -> RequestOutcome {
         let agent_id = env::predecessor_account_id();
         let memo = memo.unwrap_or_default();
         require!(!request_id.is_empty() && request_id.len() <= MAX_REQUEST_ID_LEN, "bad request_id");
         let encrypted = is_encrypted(&memo);
         require!(memo.len() <= if encrypted { MAX_ENC_LEN } else { MAX_MEMO_LEN }, "memo too long");
+        if let Some(o) = &origin {
+            require!(
+                !o.task_id.is_empty() && o.task_id.len() <= MAX_TASK_ID_LEN && valid_origin(&o.recipient) && valid_origin(&o.amount),
+                "bad origin"
+            );
+        }
 
         // Free the budget of approvals that have run out of time first.
         self.sweep_expired(SWEEP_LIMIT);
@@ -1094,7 +1351,13 @@ impl Banbo {
             return RequestOutcome::Duplicate { key, status: existing.status.clone() };
         }
 
-        let checked = self.check_policy(&agent_id, &recipient, amount.0, &token, &recipient_salt, &memo);
+        // Origin first: when a payment is refused because its recipient came
+        // from an email, that is the reason the owner should see.
+        let checked = self
+            .check_origin(&agent_id, &recipient, amount.0, &token, &origin)
+            .and_then(|hold| {
+                self.check_policy(&agent_id, &recipient, amount.0, &token, &recipient_salt, &memo).map(|fp| (fp, hold))
+            });
         if let Err(reason) = checked {
             // Under the encrypted-memo rule a plaintext memo is not copied
             // into logs or state (the agent's own transaction is still public).
@@ -1102,14 +1365,15 @@ impl Banbo {
             event(
                 "payment_rejected",
                 format!(
-                    "{{\"agent\":{},\"request_id\":{},\"recipient\":{},\"amount\":\"{}\",\"token\":{},\"reason\":{},\"memo\":{}}}",
+                    "{{\"agent\":{},\"request_id\":{},\"recipient\":{},\"amount\":\"{}\",\"token\":{},\"reason\":{},\"memo\":{},\"origin\":{}}}",
                     esc(agent_id.as_str()),
                     esc(&request_id),
                     esc(recipient.as_str()),
                     amount.0,
                     esc_token(&token),
                     esc(&reason),
-                    esc(&memo)
+                    esc(&memo),
+                    origin_json(&origin)
                 ),
             );
             // Unknown callers are not recorded: anyone could spam them.
@@ -1123,22 +1387,32 @@ impl Banbo {
                     reason: reason.clone(),
                     memo: if encrypted { memo.clone() } else { truncate(&memo, BLOCKED_MEMO_LEN) },
                     at_ms: env::block_timestamp_ms(),
+                    origin: origin.clone(),
                 });
             }
             return RequestOutcome::Rejected { reason };
         }
-        let recipient_fingerprint = checked.unwrap();
+        let (recipient_fingerprint, (origin_hold, label_trust)) = checked.unwrap();
 
         // Reserve against agent + shared budgets before anything leaves.
         let period = self.current_period();
         let now = env::block_timestamp_ms();
         let mut limits = self.get_limits(&agent_id, &token).unwrap();
         limits.reserved = U128(limits.reserved.0 + amount.0);
-        let needs_approval = amount.0 > limits.approval_threshold.0;
+        let hold_reason = match origin_hold {
+            Some(r) => Some(r),
+            None if amount.0 > limits.approval_threshold.0 => Some("over_approval_threshold".to_string()),
+            None => None,
+        };
+        let needs_approval = hold_reason.is_some();
         self.put_limits(&agent_id, &token, limits);
         let mut pool = self.pool(&token);
         pool.reserved += amount.0;
         self.put_pool(&token, pool);
+        if let Some(o) = &origin {
+            let t = self.tasks.get_mut(&o.task_id).unwrap();
+            t.reserved = U128(t.reserved.0 + amount.0);
+        }
 
         let req = PaymentRequest {
             key: key.clone(),
@@ -1156,6 +1430,9 @@ impl Banbo {
             dispatched_at_ms: if needs_approval { None } else { Some(now) },
             expires_at_ms: if needs_approval { Some(now + self.approval_ttl_ms) } else { None },
             seq: self.history_tail,
+            origin: origin.clone(),
+            hold_reason: hold_reason.clone(),
+            label_trust,
         };
         if needs_approval {
             self.next_expiry_ms = self.next_expiry_ms.min(now + self.approval_ttl_ms);
@@ -1168,13 +1445,15 @@ impl Banbo {
         self.rate.insert(agent_id.clone(), w);
 
         let data = format!(
-            "{{\"key\":{},\"agent\":{},\"recipient\":{},\"amount\":\"{}\",\"token\":{},\"memo\":{}}}",
+            "{{\"key\":{},\"agent\":{},\"recipient\":{},\"amount\":\"{}\",\"token\":{},\"memo\":{},\"origin\":{},\"hold_reason\":{}}}",
             esc(&key),
             esc(agent_id.as_str()),
             esc(recipient.as_str()),
             amount.0,
             esc_token(&token),
-            esc(&memo)
+            esc(&memo),
+            origin_json(&origin),
+            hold_reason.as_deref().map(esc).unwrap_or_else(|| "null".into())
         );
         if needs_approval {
             self.adjust_pending(&token, amount.0, true);
@@ -1258,6 +1537,7 @@ impl Banbo {
             history_limit: self.history_limit,
             in_flight_recovery_ms: IN_FLIGHT_RECOVERY_MS,
             open_payments: self.open.len(),
+            require_origin: self.require_origin,
         }
     }
 
@@ -1272,6 +1552,18 @@ impl Banbo {
                 label: e.label.clone(),
             })
             .collect()
+    }
+
+    pub fn get_task(&self, id: String) -> Option<Task> {
+        self.tasks.get(&id).cloned()
+    }
+
+    pub fn list_tasks(&self) -> Vec<Task> {
+        self.tasks.values().cloned().collect()
+    }
+
+    pub fn list_vouched(&self) -> Vec<AccountId> {
+        self.vouched.iter().cloned().collect()
     }
 
     pub fn get_tee_policy(&self) -> TeePolicy {
@@ -1601,6 +1893,82 @@ impl Banbo {
     }
 
     /// Ok(Some(fingerprint)) when the recipient matched the hidden allowlist.
+    /// Why an agent's attestation can't be relied on right now, if it can't.
+    fn attestation_problem(&self, agent_id: &AccountId) -> Option<String> {
+        match self.tee.get(agent_id) {
+            None => Some("agent_not_attested".into()),
+            Some(t) if env::block_timestamp_ms() >= t.valid_until_ms => Some("attestation_expired".into()),
+            Some(t) if !self.tee_measurements.contains_key(&t.measurement_id) => {
+                Some("agent_measurement_not_approved".into())
+            }
+            Some(_) => None,
+        }
+    }
+
+    /// The CaMeL rule, on-chain. Labels are only trusted from an agent whose
+    /// TDX attestation is valid for an approved measurement. Then:
+    /// - the recipient must be owner-origin AND one of the task's payees
+    ///   (the contract checks the payee list itself);
+    /// - the amount must fit the task's per-payment cap and budget;
+    /// - an amount from a source the task doesn't trust is held for the owner.
+    /// Returns (hold reason if it must wait for the owner, why the labels
+    /// were trusted).
+    fn check_origin(
+        &self,
+        agent_id: &AccountId,
+        recipient: &AccountId,
+        amount: u128,
+        token: &Option<AccountId>,
+        origin: &Option<PaymentOrigin>,
+    ) -> Result<(Option<String>, Option<String>), String> {
+        let Some(o) = origin else {
+            return if self.require_origin { Err("origin_required".into()) } else { Ok((None, None)) };
+        };
+        if !self.agents.contains_key(agent_id) {
+            return Err("unknown_agent".into());
+        }
+        let trust = if self.vouched.contains(agent_id) {
+            "owner_vouched"
+        } else if let Some(reason) = self.attestation_problem(agent_id) {
+            return Err(reason);
+        } else {
+            "tee"
+        };
+        let Some(t) = self.tasks.get(&o.task_id) else {
+            return Err("task_not_found".into());
+        };
+        if &t.agent != agent_id {
+            return Err("task_not_for_agent".into());
+        }
+        if t.closed {
+            return Err("task_closed".into());
+        }
+        if env::block_timestamp_ms() >= t.expires_at_ms {
+            return Err("task_expired".into());
+        }
+        if &t.token != token {
+            return Err("task_token_mismatch".into());
+        }
+        if o.recipient != Origin::Owner {
+            return Err("recipient_from_untrusted_source".into());
+        }
+        if !t.payees.contains(recipient) {
+            return Err("recipient_not_in_task".into());
+        }
+        if amount > t.max_per_payment.0 {
+            return Err("exceeds_task_max_per_payment".into());
+        }
+        if t.spent.0 + t.reserved.0 + amount > t.budget.0 {
+            return Err("exceeds_task_budget".into());
+        }
+        let hold = match &o.amount {
+            Origin::Owner => None,
+            Origin::Source { source, .. } if t.trusted_sources.contains(source) => None,
+            Origin::Source { .. } => Some("amount_from_untrusted_source".into()),
+        };
+        Ok((hold, Some(trust.to_string())))
+    }
+
     fn check_policy(
         &mut self,
         agent_id: &AccountId,
@@ -1620,15 +1988,8 @@ impl Banbo {
             return Err("agent_disabled".into());
         }
         if self.require_tee {
-            match self.tee.get(agent_id) {
-                None => return Err("agent_not_attested".into()),
-                Some(t) if env::block_timestamp_ms() >= t.valid_until_ms => {
-                    return Err("attestation_expired".into())
-                }
-                Some(t) if !self.tee_measurements.contains_key(&t.measurement_id) => {
-                    return Err("agent_measurement_not_approved".into())
-                }
-                Some(_) => {}
+            if let Some(reason) = self.attestation_problem(agent_id) {
+                return Err(reason);
             }
         }
         if amount == 0 {
@@ -1874,6 +2235,18 @@ impl Banbo {
             p.spent += req.amount.0;
         }
         self.put_pool(&req.token, p);
+        self.task_done(req, true);
+    }
+
+    /// Move a task payment's reservation to spent (paid) or back (not paid).
+    fn task_done(&mut self, req: &PaymentRequest, paid: bool) {
+        let Some(o) = &req.origin else { return };
+        if let Some(t) = self.tasks.get_mut(&o.task_id) {
+            t.reserved = U128(t.reserved.0 - req.amount.0);
+            if paid {
+                t.spent = U128(t.spent.0 + req.amount.0);
+            }
+        }
     }
 
     fn release(&mut self, req: &PaymentRequest) {
@@ -1884,6 +2257,7 @@ impl Banbo {
         let mut p = self.pool(&req.token);
         p.reserved -= req.amount.0;
         self.put_pool(&req.token, p);
+        self.task_done(req, false);
     }
 }
 
@@ -1893,3 +2267,5 @@ mod tests;
 mod tests_private;
 #[cfg(test)]
 mod tests_hardening;
+#[cfg(test)]
+mod tests_origin;

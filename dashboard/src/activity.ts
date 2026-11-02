@@ -1,6 +1,6 @@
 // One list of everything that happened, from authoritative contract state:
 // payment requests (stored per request) and blocked attempts (ring buffer).
-import { assetOf, type Asset, type VaultState, type Status } from './near';
+import { assetOf, type Asset, type VaultState, type Status, type PaymentOrigin } from './near';
 
 export type Kind = 'blocked' | Status;
 
@@ -19,12 +19,18 @@ export interface ActivityItem {
   reason?: string;
   /** Paid to a hidden-allowlist vendor. */
   hidden?: boolean;
+  /** Origin labels, for payments under a task. */
+  origin?: PaymentOrigin | null;
+  /** Why a pending payment waits for the owner. */
+  holdReason?: string | null;
+  /** "tee" or "owner_vouched" */
+  labelTrust?: string | null;
   raw: unknown;
 }
 
 export const STATUS: Record<Kind, { label: string; tone: 'red' | 'green' | 'amber' | 'blue' | 'gray'; help: string }> = {
   blocked: { label: 'Blocked', tone: 'red', help: 'Rejected by the contract before any funds were reserved.' },
-  PendingApproval: { label: 'Needs approval', tone: 'amber', help: 'Over the agent’s approval threshold. Funds are reserved until you approve or decline.' },
+  PendingApproval: { label: 'Needs approval', tone: 'amber', help: 'Waiting for you. Funds are reserved until you approve or decline.' },
   InFlight: { label: 'Sending', tone: 'blue', help: 'Funds reserved and transfer sent. Waiting for the network to confirm the result.' },
   Settled: { label: 'Paid', tone: 'green', help: 'Transfer confirmed. The reserved amount now counts as spent.' },
   Failed: { label: 'Failed · refunded', tone: 'amber', help: 'The transfer failed on-chain. The reservation was released exactly once and the funds returned to the vault.' },
@@ -45,6 +51,7 @@ export function activity(state: VaultState): ActivityItem[] {
       memo: b.memo,
       requestId: b.request_id,
       reason: b.reason,
+      origin: b.origin ?? null,
       raw: b,
     })),
     ...state.requests.map((r) => ({
@@ -60,6 +67,9 @@ export function activity(state: VaultState): ActivityItem[] {
       key: r.key,
       reason: r.failure_reason ?? undefined,
       hidden: !!r.recipient_fingerprint,
+      origin: r.origin ?? null,
+      holdReason: r.hold_reason ?? null,
+      labelTrust: r.label_trust ?? null,
       raw: r,
     })),
   ];

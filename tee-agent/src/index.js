@@ -12,22 +12,29 @@
 //   GET  /status        account, attestation, measurement (public)
 //   GET  /attestation   measurement + latest quote, for anyone to verify (public)
 //   POST /task          {"task": "..."} runs the agent (needs AGENT_TASK_TOKEN)
+//   POST /origin-task   {"task_id", "request", "emails": [raw .eml], "urls": [https]}
+//                       runs an origin-checked task (needs AGENT_TASK_TOKEN): a
+//                       planner that sees only the request writes the plan, a
+//                       quarantined reader extracts from the documents, and
+//                       every payment carries origin labels the vault checks.
 //
 // Configuration (set as encrypted secrets in the TEE deployment):
 //   NEAR_NETWORK=testnet|mainnet  VAULT_ID  NEAR_RPC (optional)
 //   NEAR_AI_API_KEY  NEAR_AI_MODEL  NEAR_AI_BASE_URL (optional)
 //   AGENT_TASK_TOKEN  HIDDEN_VENDORS='{"vendor.near":"<salt>"}' (from the dashboard)
+//   PLANNER_MODEL / READER_MODEL (optional, default NEAR_AI_MODEL)
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { DstackClient } from '@phala/dstack-sdk';
 import { getCollateral, PHALA_PCCS_URL } from '@phala/dcap-qvl';
 import { agentKey, buildAttestation } from './tee.js';
 import { openVault } from './vault.js';
-import { toolHandlers, runTask, nearAiChat } from './agent.js';
+import { toolHandlers, runTask, nearAiChat, toUnits } from './agent.js';
+import { nearAiLlm, emailDocument, webDocument, runOriginTask } from './origin/index.js';
 
 const env = process.env;
 const network = env.NEAR_NETWORK || 'testnet';
-const nodeUrl = env.NEAR_RPC || (network === 'mainnet' ? 'https://rpc.mainnet.near.org' : 'https://rpc.testnet.near.org');
+const nodeUrl = env.NEAR_RPC || (network === 'mainnet' ? 'https://rpc.mainnet.fastnear.com' : 'https://rpc.testnet.fastnear.com');
 const vaultId = env.VAULT_ID;
 const port = Number(env.PORT || 8080);
 const log = (...a) => console.log(new Date().toISOString(), ...a);
@@ -76,6 +83,29 @@ const chat = env.NEAR_AI_API_KEY && env.NEAR_AI_MODEL
   ? nearAiChat({ apiKey: env.NEAR_AI_API_KEY, model: env.NEAR_AI_MODEL, baseUrl: env.NEAR_AI_BASE_URL })
   : null;
 const handlers = toolHandlers({ vault, vaultId, salts });
+const llmFor = (model) => nearAiLlm({ apiKey: env.NEAR_AI_API_KEY, model: model || env.NEAR_AI_MODEL, baseUrl: env.NEAR_AI_BASE_URL });
+
+async function originTask({ task_id: taskId, request, emails = [], urls = [] }) {
+  if (typeof taskId !== 'string' || typeof request !== 'string' || !request.trim()) throw new Error('task_id and request are required');
+  if (!Array.isArray(emails) || !Array.isArray(urls) || emails.length + urls.length > 10) throw new Error('at most 10 documents');
+  const task = await vault.view('get_task', { id: taskId });
+  if (!task) throw new Error(`no task ${taskId} on the vault`);
+  let decimals = 24;
+  if (task.token) decimals = (await vault.view('list_tokens')).find((t) => t.token === task.token)?.decimals ?? 24;
+  const docs = [
+    ...(await Promise.all(emails.map((raw) => emailDocument(String(raw))))),
+    ...(await Promise.all(urls.map((u) => webDocument(String(u))))),
+  ];
+  return runOriginTask({
+    planner: llmFor(env.PLANNER_MODEL),
+    reader: llmFor(env.READER_MODEL),
+    request,
+    task,
+    docs,
+    pay: (args) => vault.requestPayment({ ...args, salts }),
+    toUnits: (d) => toUnits(d, decimals),
+  });
+}
 let busy = false;
 
 const send = (res, code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body, null, 2)); };
@@ -106,6 +136,18 @@ http.createServer(async (req, res) => {
         const events = [];
         const r = await runTask(task, { handlers, chat, onEvent: (e) => events.push(e) });
         return send(res, 200, { summary: r.summary, actions: events });
+      } finally { busy = false; }
+    }
+    if (req.method === 'POST' && req.url === '/origin-task') {
+      if (!authorized(req)) return send(res, 401, { error: 'unauthorized' });
+      if (!chat) return send(res, 503, { error: 'NEAR_AI_API_KEY and NEAR_AI_MODEL are not set' });
+      if (busy) return send(res, 409, { error: 'a task is already running' });
+      let body = '';
+      for await (const c of req) { body += c; if (body.length > 2_000_000) return send(res, 413, { error: 'too large' }); }
+      busy = true;
+      try {
+        const r = await originTask(JSON.parse(body || '{}'));
+        return send(res, 200, { plan: r.plan, trace: r.trace, summary: r.summary });
       } finally { busy = false; }
     }
     send(res, 404, { error: 'not found' });

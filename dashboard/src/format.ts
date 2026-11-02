@@ -74,7 +74,30 @@ const REASONS: Record<string, string> = {
   agent_measurement_not_approved: 'Agent runs an image you no longer approve',
   too_many_open_payments: 'Too many payments waiting at once',
   reconciled_by_owner: 'Marked as not sent by the owner',
+  origin_required: 'Payment had no origin labels',
+  task_not_found: 'No such task',
+  task_not_for_agent: 'Task belongs to another agent',
+  task_closed: 'Task is closed',
+  task_expired: 'Task has ended',
+  task_token_mismatch: 'Wrong asset for this task',
+  recipient_from_untrusted_source: 'Recipient came from a document, not from you',
+  recipient_not_in_task: 'Recipient isn’t a payee of this task',
+  exceeds_task_max_per_payment: 'Over the task’s per-payment limit',
+  exceeds_task_budget: 'Over the task’s budget',
+  amount_from_untrusted_source: 'Amount came from a source you don’t trust',
+  over_approval_threshold: 'Over the agent’s approval threshold',
 };
+
+/** Where a labelled value came from, in words. */
+export function originText(o: { kind: string; source?: string } | null | undefined): string {
+  if (!o) return 'not labelled';
+  if (o.kind === 'owner') return 'you (the owner)';
+  const [kind, name] = (o.source ?? '').split(/:(.*)/s);
+  if (kind === 'email') return name === 'unverified' ? 'an email that failed DKIM' : `an email from ${name} (DKIM verified)`;
+  if (kind === 'web') return `the web page at ${name}`;
+  if (kind === 'doc') return `the file ${name}`;
+  return o.source ?? 'unknown';
+}
 
 /** 3_600_000 → "1 hour", 90_000 → "1.5 minutes", 0 → "Off". */
 export function duration(ms: number): string {
