@@ -8,6 +8,8 @@ Other agent wallets check *how much* and *to whom*. Banbo also checks **who said
 
 Built at NEAR HACKATHON (Nov 2026). Tracks: **AI Security & Defense**, Privacy & Private AI, Agent Economy, Open Innovation.
 
+**Judging?** [JUDGES.md](JUDGES.md) is the shortest path: the live vault, the attack in two commands, and how to check each claim.
+
 **Contents:** [The problem](#the-problem) · [Why limits aren't enough](#why-spending-limits-arent-enough) · [The research](#the-research-camel) · [What Banbo builds](#what-banbo-builds) · [Architecture](#architecture) · [The result](#the-result) · [Try it](#try-it) · [MCP server](#use-it-from-your-own-agent-mcp) · [Everything Banbo enforces](#everything-banbo-enforces) · [The demo](#the-demo-eight-acts) · [Dashboard](#owner-dashboard) · [Technical details](#technical-details) · [Tests](#tests) · [Limitations](#limitations)
 
 ## The problem

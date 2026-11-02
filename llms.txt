@@ -1,0 +1,33 @@
+# Banbo
+
+> The security layer for AI agent wallets, on NEAR. An AI agent pays from a vault contract, and the contract decides every payment. Beyond limits and an allowlist, it checks who said so: under a task mandate, a recipient taken from an untrusted document is refused, and an amount from an untrusted sender is held for the owner. This is CaMeL's policy (arXiv 2503.18813, Google, Google DeepMind and ETH Zurich) enforced on-chain instead of inside the agent.
+
+Status: testnet only, unaudited. Live dashboard reading the public testnet vault vault.banbo-mia.testnet: https://mhiah.github.io/Banbo/
+
+Run it (Node 20+, Linux x86_64 or macOS Apple Silicon, no NEAR account or Rust needed): `make setup && make demo`. Act 1 is the invoice-fraud attack. All tests: `make test`.
+
+## Start here
+
+- [JUDGES.md](https://github.com/Mhiah/Banbo/blob/main/JUDGES.md): the shortest path to checking each claim, with the command that checks it
+- [README.md](https://github.com/Mhiah/Banbo/blob/main/README.md): problem, design, architecture, contract API, tests, limitations
+
+## Design
+
+- [docs/ORIGIN_CHECKS.md](https://github.com/Mhiah/Banbo/blob/main/docs/ORIGIN_CHECKS.md): origin labels, task mandates and what the contract enforces
+- [docs/THREAT_MODEL.md](https://github.com/Mhiah/Banbo/blob/main/docs/THREAT_MODEL.md): threats, mitigations, security review
+- [docs/PRIVACY.md](https://github.com/Mhiah/Banbo/blob/main/docs/PRIVACY.md): private mode, what stays public, trust assumptions
+
+## Code
+
+- [contract/src/lib.rs](https://github.com/Mhiah/Banbo/blob/main/contract/src/lib.rs): the vault; request_payment runs the mandate, origin and firewall checks, on_payout settles or refunds
+- [contract/src/tee.rs](https://github.com/Mhiah/Banbo/blob/main/contract/src/tee.rs): on-chain Intel TDX quote verification
+- [contract/factory/src/lib.rs](https://github.com/Mhiah/Banbo/blob/main/contract/factory/src/lib.rs): creates vaults in one transaction from a NEAR global contract code hash
+- [tee-agent/src/origin/](https://github.com/Mhiah/Banbo/blob/main/tee-agent/src/origin): CaMeL runtime: planner, quarantined reader, labelling interpreter, DKIM sources
+- [mcp/README.md](https://github.com/Mhiah/Banbo/blob/main/mcp/README.md): MCP server so any MCP agent can pay through a vault with a function-call key
+- [demo/src/act-origin.js](https://github.com/Mhiah/Banbo/blob/main/demo/src/act-origin.js): Act 1, invoice fraud against an ordinary firewall and against Banbo
+- [dashboard/](https://github.com/Mhiah/Banbo/blob/main/dashboard): owner dashboard (React), reads everything from the chain
+
+## Optional
+
+- [demo/test/](https://github.com/Mhiah/Banbo/blob/main/demo/test): integration tests on a local NEAR node
+- [scripts/reproducible-build.sh](https://github.com/Mhiah/Banbo/blob/main/scripts/reproducible-build.sh): pinned Docker build; checks the committed wasm or a deployed vault
