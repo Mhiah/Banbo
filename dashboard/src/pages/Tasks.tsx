@@ -34,17 +34,17 @@ export default function Tasks() {
   return (
     <>
       <PageHeader
-        title="Tasks"
-        subtitle="Give an agent one job at a time. Under a task the vault pays only the payees you set, and holds any amount that came from a source you don’t trust."
-        action={owner && <button className="btn primary" onClick={() => setCreating(true)}>New task</button>}
+        title="Task mandates"
+        subtitle="A task mandate gives an agent one job: who it may pay, how much, until when, and which senders may set an amount. The vault pays only the payees you set, and holds any amount that came from a source you don’t trust."
+        action={owner && <button className="btn primary" onClick={() => setCreating(true)}>New mandate</button>}
       />
-      {!owner && <div className="alert">You’re viewing tasks read-only. Only the vault owner ({short(s.config.owner)}) can create or close them.</div>}
+      {!owner && <div className="alert">You’re viewing mandates read-only. Only the vault owner ({short(s.config.owner)}) can create or close them.</div>}
 
       <Panel title="How origin checks work">
         <p className="small">
           The agent runs a planner that only sees your request, and a separate reader for emails, web pages and files. Every recipient and
           amount carries a label saying where it came from. The contract refuses a recipient that came from a document, refuses anyone outside the
-          task’s payees, and holds an amount that came from a source you haven’t trusted, showing you the exact message.
+          mandate’s payees, and holds an amount that came from a source you haven’t trusted, showing you the exact message.
         </p>
         <p className="muted xs">
           Based on CaMeL, “Defeating Prompt Injections by Design” (Debenedetti et al., Google, Google DeepMind and ETH Zurich, 2025).
@@ -52,10 +52,10 @@ export default function Tasks() {
         </p>
       </Panel>
 
-      <Panel title="Tasks" flush>
+      <Panel title="Mandates" flush>
         {tasks.length === 0 ? (
-          <Empty title="No tasks yet" action={owner && <button className="btn" onClick={() => setCreating(true)}>Create a task</button>}>
-            A task names the agent, who it may pay, how much, until when, and which senders you trust for amounts.
+          <Empty title="No mandates yet" action={owner && <button className="btn" onClick={() => setCreating(true)}>Create a mandate</button>}>
+            A mandate names the agent, who it may pay, how much, until when, and which senders you trust for amounts.
           </Empty>
         ) : (
           <ul className="tasks">
@@ -73,7 +73,7 @@ export default function Tasks() {
                       <div className="task-actions">
                         {!t.closed && <button className="btn" disabled={!!b.busy} onClick={() => setClosing(t)}>Close</button>}
                         {(t.closed || b.now >= t.expires_at_ms) && BigInt(t.reserved) === 0n && (
-                          <button className="btn" disabled={!!b.busy} onClick={() => b.act(`Task ${t.id} removed`, 'remove_task', { id: t.id })} title="Delete the record and free its storage">Remove</button>
+                          <button className="btn" disabled={!!b.busy} onClick={() => b.act(`Mandate ${t.id} removed`, 'remove_task', { id: t.id })} title="Delete the record and free its storage">Remove</button>
                         )}
                       </div>
                     )}
@@ -122,7 +122,7 @@ export default function Tasks() {
         <div className="rule-row origin-policy">
           <div className="rule-desc">
             <strong>Require origin labels on every payment:</strong> {s.config.require_origin ? 'On' : 'Off'}.{' '}
-            <span className="muted">When on, a payment outside a task, or without labels, is refused.</span>
+            <span className="muted">When on, a payment outside a mandate, or without labels, is refused.</span>
           </div>
           {owner && <button className="btn" onClick={() => setPolicy(!s.config.require_origin)}>{s.config.require_origin ? 'Turn off' : 'Turn on'}</button>}
         </div>
@@ -130,13 +130,13 @@ export default function Tasks() {
 
       <NewTask open={creating} onClose={() => setCreating(false)} />
 
-      <Dialog open={!!closing} title="Close this task?" onClose={() => setClosing(null)} footer={<>
+      <Dialog open={!!closing} title="Close this mandate?" onClose={() => setClosing(null)} footer={<>
         <button className="btn" onClick={() => setClosing(null)}>Cancel</button>
-        <button className="btn danger" disabled={!!b.busy} onClick={async () => { if (closing && await b.act(`Task ${closing.id} closed`, 'close_task', { id: closing.id })) setClosing(null); }}>
-          {b.busy ? 'Waiting for confirmation…' : 'Close task'}
+        <button className="btn danger" disabled={!!b.busy} onClick={async () => { if (closing && await b.act(`Mandate ${closing.id} closed`, 'close_task', { id: closing.id })) setClosing(null); }}>
+          {b.busy ? 'Waiting for confirmation…' : 'Close mandate'}
         </button>
       </>}>
-        {closing && <ChangeSummary rows={[['Task', closing.id, 'Closed']]} signer={b.writer?.accountId ?? null} network={b.network} />}
+        {closing && <ChangeSummary rows={[['Mandate', closing.id, 'Closed']]} signer={b.writer?.accountId ?? null} network={b.network} />}
         <p className="muted small">The agent can’t make new payments under it. Payments already sent still settle, and a held payment can only be declined.</p>
       </Dialog>
 
@@ -148,7 +148,7 @@ export default function Tasks() {
         </button>
       </>}>
         {vouch && <ChangeSummary rows={[['Agent', short(vouch.agent), vouch.on ? 'Labels accepted (vouched)' : 'Labels need a TEE proof']]} signer={b.writer?.accountId ?? null} network={b.network} />}
-        {vouch?.on && <p className="small">Only vouch for a runtime you control. Its labels are believed without a hardware proof. The contract still keeps every task payment to the task’s payees, budget and limits.</p>}
+        {vouch?.on && <p className="small">Only vouch for a runtime you control. Its labels are believed without a hardware proof. The contract still keeps every payment under a mandate to its payees, budget and limits.</p>}
       </Dialog>
 
       <Dialog open={policy !== null} title={policy ? 'Require origin labels?' : 'Stop requiring origin labels?'} onClose={() => setPolicy(null)} footer={<>
@@ -159,7 +159,7 @@ export default function Tasks() {
         </button>
       </>}>
         <ChangeSummary rows={[['Every payment needs labels', s.config.require_origin ? 'Yes' : 'No', policy ? 'Yes' : 'No']]} signer={b.writer?.accountId ?? null} network={b.network} />
-        {policy && <p className="muted small">Agents without tasks, or older agents that don’t send labels, won’t be able to pay until you give them a task.</p>}
+        {policy && <p className="muted small">Agents without mandates, or older agents that don’t send labels, won’t be able to pay until you give them a mandate.</p>}
       </Dialog>
     </>
   );
@@ -175,8 +175,8 @@ function NewTask({ open, onClose }: { open: boolean; onClose: () => void }) {
     e.preventDefault();
     try {
       const id = f.id.trim();
-      if (!/^[A-Za-z0-9._-]{1,64}$/.test(id)) throw new Error('Task id: 1–64 letters, numbers, dots, dashes or underscores.');
-      if (s.tasks.some((t) => t.id === id)) throw new Error('That task id is already used.');
+      if (!/^[A-Za-z0-9._-]{1,64}$/.test(id)) throw new Error('Mandate id: 1–64 letters, numbers, dots, dashes or underscores.');
+      if (s.tasks.some((t) => t.id === id)) throw new Error('That mandate id is already used.');
       const payees = list(f.payees);
       if (payees.length < 1 || payees.length > 10) throw new Error('Add 1–10 payees.');
       const bad = payees.find((p) => !ACCOUNT.test(p));
@@ -192,12 +192,12 @@ function NewTask({ open, onClose }: { open: boolean; onClose: () => void }) {
       const days = Number(f.days);
       if (!(days > 0 && days <= 365)) throw new Error('End: 1–365 days from now.');
       setErr('');
-      const ok = await b.act(`Task ${id} created`, 'create_task', {
+      const ok = await b.act(`Mandate ${id} created`, 'create_task', {
         id, agent: f.agent, description: f.description.trim(), payees, token: f.asset || null,
         budget, max_per_payment: max, trusted_sources: sources, expires_at_ms: Date.now() + Math.round(days * 86_400_000),
       });
       if (ok) {
-        if (notAllowed.length) b.toast('err', `Not on the allowlist yet: ${notAllowed.join(', ')}. Add them in Spending Rules before the task can pay them.`);
+        if (notAllowed.length) b.toast('err', `Not on the allowlist yet: ${notAllowed.join(', ')}. Add them in Spending Rules before the mandate can pay them.`);
         close();
       }
     } catch (x) { setErr((x as Error).message); }
@@ -211,12 +211,12 @@ function NewTask({ open, onClose }: { open: boolean; onClose: () => void }) {
   );
   const asset = assetOf(s, f.asset || null);
   return (
-    <Dialog open={open} title="New task" onClose={close} footer={<>
+    <Dialog open={open} title="New mandate" onClose={close} footer={<>
       <button className="btn" onClick={close}>Cancel</button>
-      <button className="btn primary" form="new-task" disabled={!!b.busy}>{b.busy ? 'Waiting for confirmation…' : 'Create task'}</button>
+      <button className="btn primary" form="new-task" disabled={!!b.busy}>{b.busy ? 'Waiting for confirmation…' : 'Create mandate'}</button>
     </>}>
       <form id="new-task" className="form" onSubmit={submit}>
-        {field('id', 'Task id', 'A short name, e.g. acme-october', 'acme-october')}
+        {field('id', 'Mandate id', 'A short name, e.g. acme-october', 'acme-october')}
         <label className="field">
           <span>Agent</span>
           <select value={f.agent} onChange={(e) => setF({ ...f, agent: e.target.value })}>

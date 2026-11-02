@@ -21,11 +21,11 @@ In CaMeL the policy runs on the same machine as the agent. Banbo moves the polic
 | Policy check | In the agent's interpreter | In the NEAR contract, on every payment |
 | Who can turn it off | Whoever controls the agent's machine | Nobody: it is the contract's code (reproducible build) |
 | Why the labels are believed | The interpreter is your own code | The interpreter runs in an Intel TDX TEE whose quote the contract verifies on-chain (or the owner explicitly vouches, recorded per payment) |
-| Owner's intent | The user's prompt | Also an on-chain **task**: payees, budget, per-payment cap, end time, trusted sources |
+| Owner's intent | The user's prompt | Also an on-chain **task mandate**: payees, budget, per-payment cap, end time, trusted sources |
 
 ## The rule
 
-The owner opens a **task** for an agent:
+The owner opens a **task mandate** for an agent (the contract calls it a task):
 
 ```
 create_task(id, agent, description, payees[], token, budget, max_per_payment, trusted_sources[], expires_at_ms)

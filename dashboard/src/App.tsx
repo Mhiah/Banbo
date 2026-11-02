@@ -15,7 +15,7 @@ import Settings from './pages/Settings';
 const ROUTES = [
   { path: 'overview', label: 'Overview', el: Overview },
   { path: 'agents', label: 'Agents', el: Agents },
-  { path: 'tasks', label: 'Tasks', el: Tasks },
+  { path: 'tasks', label: 'Mandates', el: Tasks },
   { path: 'rules', label: 'Spending Rules', el: Rules },
   { path: 'activity', label: 'Activity', el: Activity },
   { path: 'privacy', label: 'Privacy', el: Privacy },

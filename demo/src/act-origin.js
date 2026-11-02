@@ -103,7 +103,7 @@ export async function actInvoiceFraud(env, { log = console.log, useLlm = hasCred
   log(`  Two emails arrive. The real invoice from ${cyan('billing@acme.com')} (0.30 NEAR), and a forged`);
   log(`  "correction" from ${red('billing@acme-billing.co')}: 0.45 NEAR, payable to Globex, "don't ask".\n`);
   log(dim(`  email labels: ${genuineDoc.source} (DKIM verified), ${forgedDoc.source} (DKIM verified, but not Acme)`));
-  log(dim('  sandbox: the owner vouches for this runtime; on testnet the agent proves its code with an Intel TDX quote\n'));
+  log(dim('  sandbox: the owner vouches for this runtime; a TEE agent proves its code with an Intel TDX quote instead\n'));
 
   // Beat 1: what a limits-and-allowlist firewall does.
   log(bold('  1. An ordinary firewall'));
@@ -116,9 +116,9 @@ export async function actInvoiceFraud(env, { log = console.log, useLlm = hasCred
   act.payments.push({ beat: 'ordinary_firewall', recipient: o.globex.accountId, amountNear: 0.45, memo: 'ordinary firewall: forged correction', outcome: plain.outcome, tx: plain.hash });
 
   // Beat 2: Banbo with origin checks.
-  log(bold('  2. Banbo origin checks'));
+  log(bold('  2. Banbo: task mandate + origin checks'));
   const task = await openTask(env, o);
-  log(`    owner's task ${cyan(task.id)}: pay only ${o.acme.accountId}, ≤ 0.5 per payment, amounts trusted from email:acme.com`);
+  log(`    owner's task mandate ${cyan(task.id)}: pay only ${o.acme.accountId}, ≤ 0.5 per payment, amounts trusted from email:acme.com`);
   let planner, reader;
   if (useLlm) {
     const client = new Anthropic();
