@@ -171,6 +171,7 @@ function WalletBox() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => { if (!open) setEditing(false); }, [open]);
   useEffect(() => {
@@ -190,7 +191,6 @@ function WalletBox() {
   }
   const account = b.writer.accountId;
   const name = b.nameFor(account);
-  const [saving, setSaving] = useState(false);
   const save = async () => { setSaving(true); const ok = await b.setDisplayName(account, draft); setSaving(false); if (ok) { setEditing(false); setOpen(false); } };
   return (
     <div className="wallet" ref={box}>
