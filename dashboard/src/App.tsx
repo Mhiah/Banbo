@@ -190,7 +190,8 @@ function WalletBox() {
   }
   const account = b.writer.accountId;
   const name = b.nameFor(account);
-  const save = () => { b.setDisplayName(account, draft); setEditing(false); setOpen(false); };
+  const [saving, setSaving] = useState(false);
+  const save = async () => { setSaving(true); const ok = await b.setDisplayName(account, draft); setSaving(false); if (ok) { setEditing(false); setOpen(false); } };
   return (
     <div className="wallet" ref={box}>
       <button className={`wallet-id ${name ? '' : 'mono'}`} title={account} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
@@ -202,7 +203,7 @@ function WalletBox() {
           {editing ? (
             <form className="wallet-name-form" onSubmit={(e) => { e.preventDefault(); save(); }}>
               <input autoFocus value={draft} maxLength={32} placeholder="e.g. Mia" onChange={(e) => setDraft(e.target.value)} aria-label="Display name" />
-              <button className="btn primary sm" type="submit">Save</button>
+              <button className="btn primary sm" type="submit" disabled={saving}>{saving ? '…' : 'Save'}</button>
             </form>
           ) : (
             <button role="menuitem" onClick={() => { setDraft(name ?? ''); setEditing(true); }}>{name ? 'Change display name' : 'Set a display name'}</button>

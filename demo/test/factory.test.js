@@ -81,3 +81,12 @@ test('create_vault rejects a bad name or too small a deposit', async () => {
   await assert.rejects(alice.call(factory, 'create_vault', { name: 'tiny', period_ms: DAY_MS, shared_cap: N(5) },
     { attachedDeposit: N(5), gas: '300000000000000' }), /attach at least/);
 });
+
+test('display names: set with a small deposit, read by anyone, cleared with an empty string', async () => {
+  await alice.call(factory, 'set_display_name', { name: 'Mia' }, { attachedDeposit: N(0.01) });
+  assert.equal(await factory.view('get_display_name', { account_id: alice.accountId }), 'Mia');
+  assert.equal(await factory.view('get_display_name', { account_id: mallory.accountId }), null);
+  await assert.rejects(mallory.call(factory, 'set_display_name', { name: 'x'.repeat(33) }, { attachedDeposit: N(0.01) }), /at most 32/);
+  await alice.call(factory, 'set_display_name', { name: '' });
+  assert.equal(await factory.view('get_display_name', { account_id: alice.accountId }), null);
+});

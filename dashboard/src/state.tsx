@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   NETWORKS, NETWORK_IDS, FACTORY, type NetworkId, type VaultState, type Writer, type Call, type SandboxConfig, type WalletHandle,
-  loadVault, view, sandboxConfig, sandboxWriter, wallet, walletWriter, prettyError, signUnlock,
+  loadVault, view, saveDisplayName, sandboxConfig, sandboxWriter, wallet, walletWriter, prettyError, signUnlock,
 } from './near';
 import { keyPairFromPassphrase, keyPairFromSignature, unlockMessage, unlockNonce, type OwnerKeys } from './privacy';
 
@@ -55,10 +55,10 @@ function useBanboState() {
     try { return JSON.parse(ls.get('names', '{}')) as Record<string, string>; } catch { return {}; }
   });
   const nameFor = useCallback((account: string | null | undefined) => (account ? names[account] ?? null : null), [names]);
-  const setDisplayName = useCallback((account: string, name: string) => {
+  const remember = useCallback((account: string, name: string | null) => {
     setNames((prev) => {
       const next = { ...prev };
-      const v = name.trim().slice(0, 32);
+      const v = (name ?? '').trim().slice(0, 32);
       if (v) next[account] = v; else delete next[account];
       try { ls.set('names', JSON.stringify(next)); } catch { /* storage blocked: keep it for this visit */ }
       return next;
@@ -126,6 +126,31 @@ function useBanboState() {
   }, [account, network]);
 
   useEffect(() => setKeys(null), [network, contractId]);
+
+  // The display name is saved on the factory, so it follows the wallet to any
+  // device; this browser keeps a copy so it shows at once.
+  useEffect(() => {
+    const f = FACTORY[network];
+    if (!account || !f || network === 'sandbox') return;
+    let live = true;
+    view<string | null>(NETWORKS[network].nodeUrl, f, 'get_display_name', { account_id: account })
+      .then((n) => { if (live && n !== undefined) remember(account, n); })
+      .catch(() => { /* keep the local copy */ });
+    return () => { live = false; };
+  }, [account, network, remember]);
+  const setDisplayName = useCallback(async (account: string, name: string): Promise<boolean> => {
+    const f = FACTORY[network];
+    if (!handle || !f) { remember(account, name); return true; }
+    try {
+      await saveDisplayName(handle, f, name.trim().slice(0, 32));
+      remember(account, name);
+      toast('ok', name.trim() ? 'Display name saved' : 'Display name cleared');
+      return true;
+    } catch (e) {
+      toast('err', prettyError(e));
+      return false;
+    }
+  }, [network, handle, remember, toast]);
 
   /** Derive the private-mode key. Returns it, or null after showing why not. */
   const deriveWithWallet = useCallback(async (): Promise<OwnerKeys | null> => {

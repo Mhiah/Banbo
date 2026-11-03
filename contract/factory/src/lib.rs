@@ -22,6 +22,10 @@ pub const MIN_WORKING_DEPOSIT: NearToken = NearToken::from_near(1);
 const INIT_GAS: Gas = Gas::from_tgas(30);
 const CALLBACK_GAS: Gas = Gas::from_tgas(10);
 const CODE_KEY: &[u8] = b"vault_code";
+/// Display names live under their own keys, so adding them didn't change the
+/// factory's state layout.
+const NAME_PREFIX: &[u8] = b"name:";
+pub const MAX_NAME_LEN: usize = 32;
 
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
@@ -119,6 +123,36 @@ impl Factory {
         hash
     }
 
+    /// Set the caller's display name (what the dashboard shows instead of the
+    /// account id), or clear it with an empty string. Attach enough NEAR for
+    /// the storage (0.01 NEAR is plenty); the rest is refunded, and clearing
+    /// refunds the storage it frees.
+    #[payable]
+    pub fn set_display_name(&mut self, name: String) {
+        let name = name.trim().to_string();
+        require!(name.chars().count() <= MAX_NAME_LEN, "display name: at most 32 characters");
+        require!(!name.chars().any(|c| c.is_control()), "display name: no control characters");
+        let who = env::predecessor_account_id();
+        let key = [NAME_PREFIX, who.as_bytes()].concat();
+        let before = env::storage_usage();
+        if name.is_empty() { env::storage_remove(&key); } else { env::storage_write(&key, name.as_bytes()); }
+        let after = env::storage_usage();
+        let byte = env::storage_byte_cost().as_yoctonear();
+        let deposit = env::attached_deposit().as_yoctonear();
+        let refund = if after > before {
+            let cost = byte * (after - before) as u128;
+            require!(deposit >= cost, format!("attach at least {} yoctoNEAR for storage", cost));
+            deposit - cost
+        } else {
+            deposit + byte * (before - after) as u128
+        };
+        if refund > 0 { Promise::new(who).transfer(NearToken::from_yoctonear(refund)).detach(); }
+    }
+
+    pub fn get_display_name(&self, account_id: AccountId) -> Option<String> {
+        env::storage_read(&[NAME_PREFIX, account_id.as_bytes()].concat()).and_then(|v| String::from_utf8(v).ok())
+    }
+
     pub fn get_info(&self) -> FactoryInfo {
         FactoryInfo {
             owner: self.owner.clone(),
@@ -204,6 +238,21 @@ mod tests {
         ctx_with("mia.testnet", NearToken::from_yoctonear(0), b"not wasm".to_vec());
         assert!(panics(std::panic::AssertUnwindSafe(|| { f.set_vault_code(); })));
         assert_eq!(f.get_info().vault_code_hash, None);
+    }
+
+    #[test]
+    fn display_names_are_per_account_and_paid_for() {
+        let mut f = factory();
+        ctx("alice.testnet", NearToken::from_yoctonear(0));
+        assert!(panics(std::panic::AssertUnwindSafe(|| f.set_display_name("Mia".into()))));
+        ctx("alice.testnet", NearToken::from_millinear(10));
+        f.set_display_name("  Mia  ".into());
+        assert_eq!(f.get_display_name("alice.testnet".parse().unwrap()), Some("Mia".into()));
+        assert_eq!(f.get_display_name("bob.testnet".parse().unwrap()), None);
+        assert!(panics(std::panic::AssertUnwindSafe(|| f.set_display_name("x".repeat(33)))));
+        assert!(panics(std::panic::AssertUnwindSafe(|| f.set_display_name("a\nb".into()))));
+        f.set_display_name("".into());
+        assert_eq!(f.get_display_name("alice.testnet".parse().unwrap()), None);
     }
 
     #[test]

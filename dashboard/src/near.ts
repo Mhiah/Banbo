@@ -464,6 +464,18 @@ export function walletWriter(h: WalletHandle, contractId: string): Writer {
   };
 }
 
+/** Save the signed-in account's display name on the factory (any device shows it). */
+export async function saveDisplayName(h: WalletHandle, factory: string, name: string): Promise<void> {
+  const w = await h.selector.wallet();
+  const out = await w.signAndSendTransaction({
+    receiverId: factory,
+    // 0.01 NEAR covers the storage; the factory refunds the rest.
+    actions: [actionCreators.functionCall('set_display_name', { name }, 30_000_000_000_000n, 10n ** 22n)],
+  });
+  const status = out?.status as { Failure?: unknown } | undefined;
+  if (status && typeof status === 'object' && 'Failure' in status) throw new Error(prettyError(JSON.stringify(status.Failure)));
+}
+
 export interface FactoryInfo { owner: string; vault_code_hash: string | null; vaults_created: number; min_deposit: string }
 
 /**
