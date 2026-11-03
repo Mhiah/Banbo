@@ -251,7 +251,7 @@ Amount limits alone leave two gaps: an attacker can get the owner to allow their
 
 - **Approvals expire.** A payment waiting for the owner expires after `approval_ttl_ms` (3 days by default) and its reserved budget goes back to the agent. The next `request_payment` releases overdue approvals on its own, and anyone can call `expire_pending`.
 - **Stuck payments can be recovered.** If a transfer's result never comes back (a callback out of gas, say), the owner can record the outcome with `reconcile_stuck(key, transferred)` once 30 minutes have passed. A late callback is refused, so the payment still counts exactly once.
-- **Owner controls.** `remove_agent` deletes an agent's limits and attestation once nothing of its is open. Ownership moves in two steps (`propose_owner`, then `accept_ownership` from the new account), so a typo can't lose the vault. Only the vault account can call `new`, so a fresh deploy can't be hijacked.
+- **Owner controls.** `remove_agent` deletes an agent's limits and attestation once nothing of its is open. Ownership moves in two steps (`propose_owner`, then `accept_ownership` from the new account), so a typo can't lose the vault. Only the vault account, or the factory that created it, can call `new`, so a fresh deploy can't be hijacked.
 - **Bounded storage.** The contract keeps the last `history_limit` payments (1,000 by default) and deletes older finished records, returning their storage deposit. At most 100 payments can be open at once.
 - **Reproducible build.** `make verify-build` rebuilds the wasm in a pinned Docker image and checks it byte for byte against the committed one; `scripts/reproducible-build.sh --account <vault> --network mainnet` checks a deployed vault. CI runs every test suite and the build check on each pull request.
 
@@ -292,7 +292,7 @@ A note on concurrency: NEAR executes calls to one contract one at a time, so two
 
 | Method | Who | |
 |---|---|---|
-| `new(owner, period_ms, shared_cap)` | the vault account | init (`#[private]`; deploy and init in one transaction) |
+| `new(owner, period_ms, shared_cap)` | the vault account, or the factory that created it | init (deploy and init in one transaction) |
 | `deposit()` | anyone | payable top-up |
 | `add_agent(agent, per_tx_max, period_limit, approval_threshold)` | owner | register or update |
 | `set_agent_active(agent, active)` | owner | kill switch per agent |
@@ -330,7 +330,7 @@ NEAR amounts are yoctoNEAR strings; token amounts are in the token's smallest un
 make test-contract   # 131 vault + 7 factory Rust unit tests (policy, invariants, callbacks, tokens, risk rules, private mode,
                      #   TEE checks incl. a genuine Intel TDX quote, expiry, recovery, owner controls, history,
                      #   task mandates and origin checks: labels, holds, refusals, vouching; who may initialize a vault)
-make test-sandbox    # 48 integration tests on a local NEAR node: payments, USDC, the paid API, risk rules,
+make test-sandbox    # 49 integration tests on a local NEAR node: payments, USDC, the paid API, risk rules,
                      #   private mode, the TEE agent runtime against the contract, hardening, and the
                      #   origin runtime (planner/reader/interpreter) against the real contract, the MCP server,
                      #   and the factory creating vaults from its stored code
@@ -352,9 +352,9 @@ contract/            Rust contract (near-sdk 5)
   test-data/         genuine Intel TDX sample quote + collateral for tests
   build.sh           quick local wasm build without cargo-near
   docker/            pinned image for the reproducible build
-  factory/           creates vaults in one transaction from the published code hash
+  factory/           creates vaults in one transaction, each running a copy of the code it stores
   mock-ft/           test-only NEP-141 token used as USDC on the sandbox
-  res/               prebuilt banbo.wasm and mock_ft.wasm (so the demo runs without Rust)
+  res/               prebuilt banbo.wasm, banbo_factory.wasm and mock_ft.wasm (so the demo runs without Rust)
 demo/
   src/vault.js       sandbox setup helpers
   src/agent.js       Claude agent + scripted compromised agent
@@ -373,8 +373,10 @@ tee-agent/           agent for an Intel TDX VM (dstack): attests to the vault, N
   src/origin/        origin runtime (CaMeL): planner, quarantined reader, interpreter, DKIM/web sources
 scripts/
   deploy-testnet.sh  deploy + give an agent a restricted key on testnet
+  deploy-factory-testnet.sh  set up the vault factory on testnet
   reproducible-build.sh  pinned Docker build; checks the committed wasm or a deployed vault
   confidential-intents-check.mjs  dry confidential quote from NEAR Intents' 1Click API
+docs/TESTNET_PROOF.md  live testnet runs with Claude, and a vault created from the website
 docs/ORIGIN_CHECKS.md  origin-checked payments: the CaMeL design, what Banbo enforces, limits
 docs/THREAT_MODEL.md
 docs/PRIVACY.md      private mode: what's hidden, what stays public, trust assumptions

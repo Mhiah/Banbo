@@ -52,7 +52,7 @@ Act 2 is the crude version (an invoice with hidden instructions to send 9 NEAR t
 | The deployed code is the published source | Reproducible Docker build, pinned by digest | `make verify-build` (needs Docker); `scripts/reproducible-build.sh --account vault.banbo-mia.testnet` |
 | Factory vaults all run the published, unchangeable code | `contract/factory` deploys the code it holds; a vault has no access keys | `contract/factory` unit tests, `demo/test/factory.test.js`, and `scripts/reproducible-build.sh --account <vault>` |
 
-`make test` runs all of it (48 sandbox integration tests on top of the unit tests).
+`make test` runs all of it (49 sandbox integration tests on top of the unit tests).
 
 ## 4. Use it from an agent
 
