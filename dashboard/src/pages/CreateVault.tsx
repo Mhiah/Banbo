@@ -4,7 +4,10 @@ import { FACTORY, NETWORKS, createVault, view, wallet, prettyError, type Factory
 import { Panel, PageHeader, Empty } from '../ui';
 import { near, short, toYocto } from '../format';
 
-const NAME = /^(?=.{2,32}$)[a-z\d]+([-_][a-z\d]+)*$/;
+// One or two words, letters and digits only. The words are joined and
+// lowercased for the account name: "Nectar Beauty" -> nectarbeauty.
+const WORDS = /^[a-z\d]+( [a-z\d]+)?$/i;
+const toAccountName = (v: string) => v.trim().replace(/\s+/g, ' ').toLowerCase().replace(/ /g, '');
 const DAY_MS = 86_400_000;
 
 /** Create a vault from the browser: one wallet-signed transaction to the factory. */
@@ -47,14 +50,14 @@ export default function CreateVault() {
 
   // min_deposit = code storage + 1 NEAR of working balance (see contract/factory).
   const codeStorage = info ? (BigInt(info.min_deposit) - 10n ** 24n).toString() : '0';
-  const name = f.name.trim().toLowerCase();
+  const name = toAccountName(f.name);
   const vaultId = name ? `${name}.${factory}` : `yourname.${factory}`;
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     try {
       if (!h) throw new Error('The wallet isn’t ready yet.');
       if (!account) { h.modal.show(); return; }
-      if (!NAME.test(name)) throw new Error('Name: 2–32 lowercase letters or digits, words joined by - or _.');
+      if (!WORDS.test(f.name.trim().replace(/\s+/g, ' ')) || name.length < 2 || name.length > 32) throw new Error('Name: one or two words, letters and digits only (2–32 characters).');
       const deposit = toYocto(f.deposit);
       if (info && !info.vault_code_hash) throw new Error('Vault creation isn’t open yet on this network.');
       if (info && BigInt(deposit) < BigInt(info.min_deposit)) throw new Error(`Start with at least ${near(info.min_deposit)} NEAR: about ${near(codeStorage)} NEAR stays locked to store the vault’s code, and the rest is its working balance.`);
@@ -80,7 +83,7 @@ export default function CreateVault() {
         <form className="form" onSubmit={submit}>
           <label className="field">
             <span>Vault name</span>
-            <input value={f.name} onChange={set('name')} placeholder="acme-treasury" spellCheck={false} autoComplete="off" />
+            <input value={f.name} onChange={set('name')} placeholder="Acme Treasury" spellCheck={false} autoComplete="off" />
             <small>Your vault will be <span className="mono">{vaultId}</span></small>
           </label>
           <div className="form-row two">
