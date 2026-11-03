@@ -13,6 +13,8 @@ Open **[the demo vault on the live dashboard](https://mhiah.github.io/Banbo/#/ov
 - **Mandates**: task mandates and whose origin labels the contract accepts.
 - **Activity**: every payment and every blocked attempt, with the rule that decided it.
 
+**Live runs with Claude** (paid, refused, held then approved, redirect refused on-chain), each with its explorer link: [docs/TESTNET_PROOF.md](docs/TESTNET_PROOF.md).
+
 With a testnet wallet you can also create your own vault (**+ Create a vault**) and connect an agent to it (**Agents → Connect a new agent**).
 
 ## 2. Run the attack locally
@@ -62,7 +64,7 @@ We'd rather you read this here than find it yourself. The full list is in [READM
 
 - Testnet only, unaudited. Don't put real funds in it.
 - The TEE agent has been tested with a genuine Intel TDX quote verified on-chain, but not yet deployed in a live TDX VM. The demo uses owner vouching instead.
-- The origin runtime has been tested end to end with scripted models; runs with a live model still need checking.
+- The origin runtime (`tee-agent/`) has been tested end to end with scripted models; runs of it with a live model still need checking. Claude has paid through the MCP server on testnet ([docs/TESTNET_PROOF.md](docs/TESTNET_PROOF.md)).
 - Private mode hides the vendor list and memos, not payments: amounts and recipients of made payments are public.
 
 ## Where things are

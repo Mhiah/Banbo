@@ -148,6 +148,8 @@ Act 1 of the demo runs the Acme scenario as real transactions on a local NEAR no
 
 **Live on NEAR testnet:** the dashboard is at **[mhiah.github.io/Banbo](https://mhiah.github.io/Banbo/)**: connect a testnet wallet to create or open your vault. To look at the demo vault without a wallet, open **[this link](https://mhiah.github.io/Banbo/#/overview?vault=vault.banbo-mia.testnet)**; it reads everything from the chain, and only the owner's wallet can change anything.
 
+**Live runs with Claude:** a normal payment, a refused attacker payment, an emailed invoice held for the owner, and an email redirect refused on-chain, with explorer links: [docs/TESTNET_PROOF.md](docs/TESTNET_PROOF.md).
+
 To run everything locally:
 
 ```bash
@@ -218,7 +220,7 @@ The dashboard is where the vault owner watches spending and changes the rules: t
 
 ![Overview](docs/screenshots/overview.png)
 
-Everything on screen is read from the contract: every 2 seconds on the sandbox, every 6 seconds on testnet and mainnet (public RPC nodes rate-limit). A change shows as done only after the transaction is confirmed on chain. On the sandbox, owner actions are signed by the sandbox process, so keys never reach the browser. On testnet and mainnet you connect the owner wallet (Meteor, MyNearWallet, HERE or Intear) and sign each change yourself. The **Demo** page (sandbox only) runs the invoice-fraud attack, the prompt-injection attack and the other scenarios as real transactions.
+Everything on screen is read from the contract: every 2 seconds on the sandbox, every 15 seconds on testnet and mainnet (public RPC nodes rate-limit). A change shows as done only after the transaction is confirmed on chain. On the sandbox, owner actions are signed by the sandbox process, so keys never reach the browser. On testnet and mainnet you connect the owner wallet (Meteor, MyNearWallet, HERE or Intear) and sign each change yourself. The **Demo** page (sandbox only) runs the invoice-fraud attack, the prompt-injection attack and the other scenarios as real transactions.
 
 The **Mandates** page is where the owner gives an agent a task mandate (who it may pay, a budget, a per-payment cap, an end time, the senders trusted to set an amount) and chooses whose origin labels the contract accepts.
 
@@ -421,7 +423,7 @@ OWNER=you.testnet FACTORY=banbo-vaults.testnet ./scripts/deploy-factory-testnet.
 - TEE agents trust Intel TDX and dstack's key service for privacy (never for the spending limits). The full attestation flow has been tested on-chain with a genuine Intel quote, but not yet with an agent deployed in a live TDX VM.
 - Outside a task mandate, the allowlist is the main defence against new recipients and doesn't judge whether a payment to an approved vendor is sensible beyond the limits. Under a mandate, the origin check adds that judgment for recipients and amounts.
 - Origin labels are as trustworthy as the TEE and the runtime code, or, for an owner-vouched agent, the owner's own server. The sandbox demo uses vouching because it can't produce a live TDX quote. DKIM proves which domain sent an email, not that the domain is honest.
-- The origin runtime has been tested end to end with scripted models (including a reader fully fooled by the forgery). Runs with a live model (Claude or NEAR AI) still need to be checked.
+- The origin runtime (`tee-agent/`) has been tested end to end with scripted models (including a reader fully fooled by the forgery); runs of that runtime with a live model still need checking. Claude itself has paid through the MCP server on testnet, with the vault holding and refusing payments as designed ([docs/TESTNET_PROOF.md](docs/TESTNET_PROOF.md)).
 - Recovering a stuck payment relies on the owner reading the explorer correctly (`reconcile_stuck`).
 - Testnet only, unaudited. Don't put real funds in it.
 

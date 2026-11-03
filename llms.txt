@@ -10,6 +10,7 @@ Run it (Node 20+, Linux x86_64 or macOS Apple Silicon, no NEAR account or Rust n
 
 - [JUDGES.md](https://github.com/Mhiah/Banbo/blob/main/JUDGES.md): the shortest path to checking each claim, with the command that checks it
 - [README.md](https://github.com/Mhiah/Banbo/blob/main/README.md): problem, design, architecture, contract API, tests, limitations
+- [docs/TESTNET_PROOF.md](https://github.com/Mhiah/Banbo/blob/main/docs/TESTNET_PROOF.md): live testnet runs with Claude paying through the MCP server (paid, refused, held then approved, redirect refused on-chain), with explorer links
 
 ## Design
 
