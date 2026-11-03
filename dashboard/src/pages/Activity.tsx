@@ -155,13 +155,13 @@ export default function Activity() {
       <p className="footnote">Blocked attempts: the contract keeps the latest 50 from registered agents ({s.blockedCount} blocked in total). It keeps the latest {s.config.history_limit.toLocaleString()} payment requests, plus any that are still open.</p>
 
       <Drawer open={!!open} title="Payment details" onClose={() => setOpen(null)}>
-        {open && <Detail item={open} memo={<Memo memo={open.memo} text={opened.get(open.memo) ?? null} />} />}
+        {open && <Detail item={open} onDone={() => setOpen(null)} memo={<Memo memo={open.memo} text={opened.get(open.memo) ?? null} />} />}
       </Drawer>
     </>
   );
 }
 
-function Detail({ item, memo }: { item: ActivityItem; memo: ReactNode }) {
+function Detail({ item, memo, onDone }: { item: ActivityItem; memo: ReactNode; onDone: () => void }) {
   const b = useBanbo();
   const st = STATUS[item.kind];
   const req = item.kind === 'blocked' ? null : (item.raw as PaymentRequest);
@@ -190,6 +190,18 @@ function Detail({ item, memo }: { item: ActivityItem; memo: ReactNode }) {
         {item.kind === 'PendingApproval' && req?.expires_at_ms && <><dt>Approve by</dt><dd>{new Date(req.expires_at_ms).toLocaleString()} ({req.expires_at_ms > b.now ? until(req.expires_at_ms, b.now) : 'passed'})</dd></>}
         {item.kind !== 'blocked' && <><dt>Funds</dt><dd>{item.kind === 'Settled' ? 'Left the vault' : item.kind === 'InFlight' ? 'Reserved, transfer pending' : item.kind === 'PendingApproval' ? 'Reserved, waiting for you' : 'Returned to the vault'}</dd></>}
       </dl>
+      {item.kind === 'PendingApproval' && req && b.isOwner && (
+        req.expires_at_ms && req.expires_at_ms <= b.now ? (
+          <div className="detail-actions">
+            <button className="btn" disabled={!!b.busy} onClick={async () => { if (await b.act('Expired approvals released', 'expire_pending', {})) onDone(); }}>Release budget</button>
+          </div>
+        ) : (
+          <div className="detail-actions">
+            <button className="btn" disabled={!!b.busy} onClick={async () => { if (await b.act('Payment declined', 'decline', { key: req.key })) onDone(); }}>Decline</button>
+            <button className="btn primary" disabled={!!b.busy} onClick={async () => { if (await b.act('Payment approved and sent', 'approve', { key: req.key })) onDone(); }}>{b.busy ? 'Waiting for confirmation…' : 'Approve'}</button>
+          </div>
+        )
+      )}
       {item.kind === 'InFlight' && req && <StuckPayment req={req} />}
       {b.explorer && (
         <p className="small"><a className="link" href={`${b.explorer}/address/${item.agent}`} target="_blank" rel="noreferrer">Find this transaction on NearBlocks ↗</a></p>

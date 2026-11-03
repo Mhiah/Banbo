@@ -458,3 +458,5 @@ h3.sub { font-size: 13px; font-weight: 600; margin: 18px 0 2px; }
   .guide-nav a { white-space: nowrap; }
   .guide-fields > div { grid-template-columns: 1fr; gap: 2px; }
 }
+
+.detail-actions { display: flex; gap: 10px; justify-content: flex-end; margin: 4px 0 14px; }
