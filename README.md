@@ -220,7 +220,7 @@ The dashboard is where the vault owner watches spending and changes the rules: t
 
 ![Overview](docs/screenshots/overview.png)
 
-Everything on screen is read from the contract: every 2 seconds on the sandbox, every 15 seconds on testnet and mainnet (public RPC nodes rate-limit). A change shows as done only after the transaction is confirmed on chain. On the sandbox, owner actions are signed by the sandbox process, so keys never reach the browser. On testnet and mainnet you connect the owner wallet (Meteor, MyNearWallet, HERE or Intear) and sign each change yourself. The **Demo** page (sandbox only) runs the invoice-fraud attack, the prompt-injection attack and the other scenarios as real transactions.
+Everything on screen is read from the contract: every 2 seconds on the sandbox, every 15 seconds on testnet and mainnet (public RPC nodes rate-limit). A change shows as done only after the transaction is confirmed on chain. On the sandbox, owner actions are signed by the sandbox process, so keys never reach the browser. On testnet and mainnet you connect the owner wallet (Meteor, HOT, OKX, Nightly, MyNearWallet, Sender, NEAR Mobile, HERE, Intear or Ledger) and sign each change yourself. The **Demo** page (sandbox only) runs the invoice-fraud attack, the prompt-injection attack and the other scenarios as real transactions.
 
 The **Mandates** page is where the owner gives an agent a task mandate (who it may pay, a budget, a per-payment cap, an end time, the senders trusted to set an amount) and chooses whose origin labels the contract accepts.
 

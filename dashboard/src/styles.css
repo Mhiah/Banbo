@@ -66,7 +66,7 @@ input:focus, select:focus { outline: none; border-color: var(--accent); box-shad
 
 /* ------------------------------------------------------------ shell */
 .shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 100vh; }
-.sidebar {
+aside.sidebar {
   position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: 18px;
   padding: 18px 14px; background: var(--surface); border-right: 1px solid var(--line);
 }
@@ -118,8 +118,8 @@ main { width: 100%; max-width: 1180px; margin: 0 auto; padding: 28px 32px 64px; 
 
 @media (max-width: 860px) {
   .shell { grid-template-columns: 1fr; }
-  .sidebar { position: fixed; inset: 0 auto 0 0; width: 260px; z-index: 40; transform: translateX(-100%); transition: transform 0.2s ease; box-shadow: none; }
-  .nav-open .sidebar { transform: none; box-shadow: 0 0 40px rgba(25, 42, 32, 0.15); }
+  aside.sidebar { position: fixed; inset: 0 auto 0 0; width: 260px; z-index: 40; transform: translateX(-100%); transition: transform 0.2s ease; box-shadow: none; }
+  .nav-open aside.sidebar { transform: none; box-shadow: 0 0 40px rgba(25, 42, 32, 0.15); }
   .nav-open .scrim { display: block; position: fixed; inset: 0; background: rgba(25, 42, 32, 0.25); z-index: 30; }
   .nav-close { display: grid; }
   .topbar { padding: 10px 14px; }

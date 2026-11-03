@@ -392,21 +392,39 @@ export function wallet(network: 'testnet' | 'mainnet', contractId: string): Prom
   if (!walletCache.has(k)) {
     walletCache.set(k, (async () => {
       // Loaded on demand so the sandbox view never pulls in wallet code.
-      const [{ Buffer }, { setupWalletSelector }, { setupModal }, mnw, meteor, here, intear] = await Promise.all([
-        import('buffer'),
+      // Some wallet modules use Buffer as soon as they load.
+      const { Buffer } = await import('buffer');
+      const g = globalThis as { Buffer?: unknown };
+      g.Buffer ??= Buffer;
+      const [{ setupWalletSelector }, { setupModal }, mnw, meteor, here, intear, hot, okx, nightly, sender, nearMobile, ledger] = await Promise.all([
         import('@near-wallet-selector/core'),
         import('@near-wallet-selector/modal-ui'),
         import('@near-wallet-selector/my-near-wallet'),
         import('@near-wallet-selector/meteor-wallet'),
         import('@near-wallet-selector/here-wallet'),
         import('@near-wallet-selector/intear-wallet'),
+        import('@near-wallet-selector/hot-wallet'),
+        import('@near-wallet-selector/okx-wallet'),
+        import('@near-wallet-selector/nightly'),
+        import('@near-wallet-selector/sender'),
+        import('@near-wallet-selector/near-mobile-wallet'),
+        import('@near-wallet-selector/ledger'),
       ]);
-      const g = globalThis as { Buffer?: unknown };
-      g.Buffer ??= Buffer;
-      const { setupMyNearWallet } = mnw, { setupMeteorWallet } = meteor, { setupHereWallet } = here, { setupIntearWallet } = intear;
+      // Each module shows only on the networks that wallet supports.
       const selector = await setupWalletSelector({
         network,
-        modules: [setupMeteorWallet(), setupMyNearWallet(), setupHereWallet(), setupIntearWallet()],
+        modules: [
+          meteor.setupMeteorWallet(),
+          hot.setupHotWallet(),
+          okx.setupOKXWallet(),
+          nightly.setupNightly(),
+          mnw.setupMyNearWallet(),
+          sender.setupSender(),
+          nearMobile.setupNearMobileWallet(),
+          here.setupHereWallet(),
+          intear.setupIntearWallet(),
+          ledger.setupLedger(),
+        ],
       });
       const modal = setupModal(selector, { contractId });
       return { selector, modal };
