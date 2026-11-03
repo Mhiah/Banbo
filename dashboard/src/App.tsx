@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { BanboProvider, useBanbo } from './state';
 import { NETWORKS, HOSTED, FACTORY } from './near';
 import { short } from './format';
@@ -66,14 +66,13 @@ function Shell() {
       <a className="skip" href="#main">Skip to content</a>
       <aside className="sidebar" aria-label="Main navigation">
         <div className="side-top">
-          <a href="#/overview" className="wordmark" aria-label="Banbo home">banbo<span>.</span></a>
+          <a href="#/overview" className="wordmark" aria-label="Banbo home">Banbo<span>.</span></a>
           <button className="icon-btn nav-close" onClick={() => setNavOpen(false)} aria-label="Close menu">×</button>
         </div>
         {b.contractId && (
           <div className="vault-ctx">
             <div className="ctx-label">Vault</div>
             <div className="ctx-value mono" title={b.contractId}>{b.contractId ? short(b.contractId) : 'Not selected'}</div>
-            {FACTORY[b.network] && <a className="link-btn xs" href="#/new">+ Create a vault</a>}
           </div>
         )}
         <nav>
@@ -100,7 +99,7 @@ function Shell() {
           <button className="icon-btn menu" onClick={() => setNavOpen(true)} aria-label="Open menu">
             <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden><path d="M2 4h14M2 9h14M2 14h14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
           </button>
-          <a href="#/overview" className="wordmark sm">banbo<span>.</span></a>
+          <a href="#/overview" className="wordmark sm">Banbo<span>.</span></a>
           {b.state?.config.paused && <span className="badge red top-paused"><span className="dot" />Vault paused</span>}
           <div className="top-right">
             <div className={`net net-${b.network}`} title={b.network === 'sandbox' ? 'Local sandbox' : `NEAR ${NETWORKS[b.network].label}`}>
@@ -169,6 +168,16 @@ function VaultGate({ children }: { children: React.ReactNode }) {
 
 function WalletBox() {
   const b = useBanbo();
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const off = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', off);
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('mousedown', off); document.removeEventListener('keydown', esc); };
+  }, [open]);
   if (b.network === 'sandbox') {
     return <div className="wallet" title="Local dev key, held by the sandbox process"><span className="mono">{b.writer?.accountId ? short(b.writer.accountId) : '-'}</span></div>;
   }
@@ -177,9 +186,15 @@ function WalletBox() {
     return <button className="btn primary sm" onClick={() => b.handle!.modal.show()}>Connect wallet</button>;
   }
   return (
-    <div className="wallet">
-      <span className="mono wallet-id" title={b.writer.accountId}>{short(b.writer.accountId)}</span>
-      <button className="link-btn xs" onClick={async () => (await b.handle!.selector.wallet()).signOut()}>Sign out</button>
+    <div className="wallet" ref={box}>
+      <button className="wallet-id mono" title={b.writer.accountId} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
+        {short(b.writer.accountId)}<span className="caret" aria-hidden>▾</span>
+      </button>
+      {open && (
+        <div className="wallet-menu" role="menu">
+          <button role="menuitem" onClick={async () => { setOpen(false); (await b.handle!.selector.wallet()).signOut(); }}>Sign out</button>
+        </div>
+      )}
     </div>
   );
 }
