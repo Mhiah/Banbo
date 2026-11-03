@@ -131,12 +131,21 @@ export default function Tasks() {
 
       <Dialog open={!!closing} title="Close this mandate?" onClose={() => setClosing(null)} footer={<>
         <button className="btn" onClick={() => setClosing(null)}>Cancel</button>
-        <button className="btn danger" disabled={!!b.busy} onClick={async () => { if (closing && await b.act(`Mandate ${closing.id} closed`, 'close_task', { id: closing.id })) setClosing(null); }}>
+        <button className="btn danger" disabled={!!b.busy} onClick={async () => {
+          if (!closing) return;
+          const idle = BigInt(closing.reserved) === 0n;
+          const ok = idle
+            ? await b.act(`Mandate ${closing.id} closed`, [{ method: 'close_task', args: { id: closing.id } }, { method: 'remove_task', args: { id: closing.id } }])
+            : await b.act(`Mandate ${closing.id} closed`, 'close_task', { id: closing.id });
+          if (ok) setClosing(null);
+        }}>
           {b.busy ? 'Waiting for confirmation…' : 'Close mandate'}
         </button>
       </>}>
-        {closing && <ChangeSummary rows={[['Mandate', closing.id, 'Closed']]} signer={b.writer?.accountId ?? null} network={b.network} />}
-        <p className="muted small">The agent can’t make new payments under it. Payments already sent still settle, and a held payment can only be declined.</p>
+        {closing && <ChangeSummary rows={[['Mandate', closing.id, BigInt(closing.reserved) === 0n ? 'Closed and removed' : 'Closed']]} signer={b.writer?.accountId ?? null} network={b.network} />}
+        <p className="muted small">{closing && BigInt(closing.reserved) === 0n
+          ? 'The agent can’t pay under it any more, and it’s cleared from this list. One wallet confirmation.'
+          : 'The agent can’t make new payments under it. Payments already sent still settle; you can remove it from the list once they have.'}</p>
       </Dialog>
 
       <Dialog open={!!vouch} title={vouch?.on ? 'Vouch for this agent’s labels?' : 'Stop vouching?'} onClose={() => setVouch(null)} footer={<>

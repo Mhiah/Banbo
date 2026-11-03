@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import {
-  NETWORKS, NETWORK_IDS, FACTORY, type NetworkId, type VaultState, type Writer, type SandboxConfig, type WalletHandle,
+  NETWORKS, NETWORK_IDS, FACTORY, type NetworkId, type VaultState, type Writer, type Call, type SandboxConfig, type WalletHandle,
   loadVault, view, sandboxConfig, sandboxWriter, wallet, walletWriter, prettyError, signUnlock,
 } from './near';
 import { keyPairFromPassphrase, keyPairFromSignature, unlockMessage, unlockNonce, type OwnerKeys } from './privacy';
@@ -205,11 +205,12 @@ function useBanboState() {
   const isOwner = !!state && !!writer?.accountId && writer.accountId === state.config.owner;
 
   /** Sign and send an owner action. Resolves true once confirmed. */
-  const act = useCallback(async (label: string, method: string, args: object = {}, deposit?: string): Promise<boolean> => {
+  const act = useCallback(async (label: string, method: string | Call[], args: object = {}, deposit?: string): Promise<boolean> => {
     if (!writer) return false;
     setBusy(label);
     try {
-      await writer.call(method, args, deposit);
+      if (typeof method === 'string') await writer.call(method, args, deposit);
+      else await writer.calls(method);
       await refresh(true);
       toast('ok', label);
       return true;

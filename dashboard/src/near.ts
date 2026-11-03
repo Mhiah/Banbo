@@ -320,9 +320,12 @@ export async function loadVault(nodeUrl: string, contractId: string): Promise<Va
 
 // ------------------------------------------------------------------ writes
 
+export interface Call { method: string; args: object }
 export interface Writer {
   accountId: string | null;
   call(method: string, args: object, depositYocto?: string): Promise<string | undefined>;
+  /** Several calls on the vault, in one transaction where the signer allows it (all or nothing). */
+  calls(list: Call[]): Promise<string | undefined>;
 }
 
 export interface SandboxConfig {
@@ -360,6 +363,11 @@ export function sandboxWriter(cfg: SandboxConfig): Writer {
   return {
     accountId: cfg.owner,
     call: async (method, args, deposit) => (await post<{ hash: string }>('/call', { method, args, deposit })).hash,
+    calls: async (list) => {
+      let hash: string | undefined;
+      for (const c of list) hash = (await post<{ hash: string }>('/call', { method: c.method, args: c.args })).hash;
+      return hash;
+    },
   };
 }
 
@@ -423,19 +431,18 @@ export async function signUnlock(h: WalletHandle, message: string, recipient: st
 export function walletWriter(h: WalletHandle, contractId: string): Writer {
   const accounts = h.selector.store.getState().accounts;
   const accountId = accounts.find((a) => a.active)?.accountId ?? accounts[0]?.accountId ?? null;
+  const send = async (actions: ReturnType<typeof actionCreators.functionCall>[]) => {
+    const w = await h.selector.wallet();
+    const out = await w.signAndSendTransaction({ receiverId: contractId, actions });
+    if (!out) return undefined;
+    const status = out.status as { Failure?: unknown };
+    if (status && typeof status === 'object' && 'Failure' in status) throw new Error(prettyError(JSON.stringify(status.Failure)));
+    return out.transaction?.hash;
+  };
   return {
     accountId,
-    call: async (method, args, deposit = '0') => {
-      const w = await h.selector.wallet();
-      const out = await w.signAndSendTransaction({
-        receiverId: contractId,
-        actions: [actionCreators.functionCall(method, args, 150_000_000_000_000n, BigInt(deposit))],
-      });
-      if (!out) return undefined;
-      const status = out.status as { Failure?: unknown };
-      if (status && typeof status === 'object' && 'Failure' in status) throw new Error(prettyError(JSON.stringify(status.Failure)));
-      return out.transaction?.hash;
-    },
+    call: (method, args, deposit = '0') => send([actionCreators.functionCall(method, args, 150_000_000_000_000n, BigInt(deposit))]),
+    calls: (list) => send(list.map((c) => actionCreators.functionCall(c.method, c.args, BigInt(Math.floor(150_000_000_000_000 / list.length)), 0n))),
   };
 }
 
