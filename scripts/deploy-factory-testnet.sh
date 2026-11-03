@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Deploy the Banbo factory to NEAR testnet and give it the vault code, so
-# anyone can create a vault from the dashboard with one wallet transaction.
-# Needs near-cli-rs and a funded account in your keychain. Usage:
+# Deploy the Banbo factory to NEAR testnet (or mainnet) and give it the vault
+# code, so anyone can create a vault from the dashboard with one wallet
+# transaction. Needs near-cli-rs and a funded account in your keychain. Usage:
 #   OWNER=you.testnet FACTORY=banbo-vaults.testnet ./scripts/deploy-factory-testnet.sh
+# Mainnet (real NEAR): NETWORK=mainnet OWNER=you.near FACTORY=banbo-vaults.near
 #
 # The factory stores one copy of banbo.wasm (about 7.7 NEAR of storage) plus its
 # own code (about 1.4 NEAR), so it needs about 10 NEAR. FUNDER (default OWNER)
@@ -12,8 +13,11 @@ set -euo pipefail
 FUNDER="${FUNDER:-$OWNER}"
 TARGET_NEAR="${TARGET_NEAR:-10.5}"
 RES="$(dirname "$0")/../contract/res"
-NET=(network-config testnet)
-RPC="${RPC:-https://test.rpc.fastnear.com}"
+NETWORK="${NETWORK:-testnet}"
+case "$NETWORK" in testnet|mainnet) ;; *) echo "NETWORK must be testnet or mainnet" >&2; exit 1;; esac
+NET=(network-config "$NETWORK")
+if [ "$NETWORK" = mainnet ]; then DEF_RPC=https://rpc.mainnet.fastnear.com; else DEF_RPC=https://test.rpc.fastnear.com; fi
+RPC="${RPC:-$DEF_RPC}"
 
 # Public RPC nodes rate-limit; wait and try again instead of stopping. Safe to
 # re-run the whole script: it skips what's already done.
@@ -72,4 +76,4 @@ else
 fi
 
 near contract call-function as-read-only "$FACTORY" get_info json-args '{}' "${NET[@]}" now
-echo "Done. Create a vault at https://mhiah.github.io/Banbo/#/new"
+echo "Done. Create a vault at https://mhiah.github.io/Banbo/ ($NETWORK)"
