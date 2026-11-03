@@ -49,6 +49,21 @@ async function findOwnVault(n: NetworkId, account: string): Promise<string> {
 }
 
 function useBanboState() {
+  // A display name per wallet account, kept in this browser only. The wallet
+  // account stays the identity; the name is just what the screen shows.
+  const [names, setNames] = useState<Record<string, string>>(() => {
+    try { return JSON.parse(ls.get('names', '{}')) as Record<string, string>; } catch { return {}; }
+  });
+  const nameFor = useCallback((account: string | null | undefined) => (account ? names[account] ?? null : null), [names]);
+  const setDisplayName = useCallback((account: string, name: string) => {
+    setNames((prev) => {
+      const next = { ...prev };
+      const v = name.trim().slice(0, 32);
+      if (v) next[account] = v; else delete next[account];
+      try { ls.set('names', JSON.stringify(next)); } catch { /* storage blocked: keep it for this visit */ }
+      return next;
+    });
+  }, []);
   const [network, setNetworkRaw] = useState<NetworkId>(startNetwork);
   const [contractInput, setContractInput] = useState(linkedVault);
   const [sandbox, setSandbox] = useState<SandboxConfig | null>(null);
@@ -227,6 +242,7 @@ function useBanboState() {
     sandbox, sandboxDown, handle, writer, state, loadError, toasts, toast, busy, setBusy, now,
     isOwner, refresh, act,
     keys, setKeys, deriveWithWallet, deriveWithPassphrase,
+    nameFor, setDisplayName,
   };
 }
 

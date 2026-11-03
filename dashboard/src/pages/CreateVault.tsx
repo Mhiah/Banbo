@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { useBanbo } from '../state';
 import { FACTORY, NETWORKS, createVault, view, wallet, prettyError, type FactoryInfo, type WalletHandle } from '../near';
 import { Panel, PageHeader, Empty } from '../ui';
-import { near, toYocto } from '../format';
+import { near, short, toYocto } from '../format';
 
 const NAME = /^(?=.{2,32}$)[a-z\d]+([-_][a-z\d]+)*$/;
 const DAY_MS = 86_400_000;
@@ -98,7 +98,7 @@ export default function CreateVault() {
           {err && <p className="form-err" role="alert">{err}</p>}
           <div className="form-actions">
             <button className="btn primary" disabled={busy || !h}>
-              {busy ? 'Waiting for confirmation…' : account ? `Create vault as ${account}` : 'Connect wallet to continue'}
+              {busy ? 'Waiting for confirmation…' : account ? `Create vault as ${b.nameFor(account) ?? short(account)}` : 'Connect wallet to continue'}
             </button>
           </div>
           <p className="muted xs">

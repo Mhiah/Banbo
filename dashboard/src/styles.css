@@ -106,6 +106,11 @@ nav a.active::before { content: ""; position: absolute; }
 }
 .wallet-menu button { display: block; width: 100%; text-align: left; padding: 8px 10px; font-size: 13px; background: none; border: 0; border-radius: 6px; color: var(--ink); cursor: pointer; }
 .wallet-menu button:hover { background: var(--gray-wash); }
+.wallet-menu { min-width: 220px; }
+.wallet-menu-acct { padding: 6px 10px 8px; font-size: 11.5px; color: var(--ink-2); border-bottom: 1px solid var(--line-2); margin-bottom: 4px; }
+.wallet-name-form { display: flex; gap: 6px; padding: 4px 6px 6px; }
+.wallet-name-form input { flex: 1; min-width: 0; height: 30px; padding: 0 8px; font-size: 13px; border: 1px solid var(--line); border-radius: 6px; }
+.wallet-menu .wallet-name-form button { width: auto; padding: 0 10px; color: #fff; background: var(--accent); }
 .content { min-width: 0; display: flex; flex-direction: column; }
 .topbar { display: flex; align-items: center; gap: 8px; padding: 10px 32px; min-height: 52px; background: var(--surface); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 20; }
 .topbar .menu, .topbar .wordmark { display: none; }

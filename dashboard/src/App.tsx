@@ -169,7 +169,10 @@ function VaultGate({ children }: { children: React.ReactNode }) {
 function WalletBox() {
   const b = useBanbo();
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
   const box = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (!open) setEditing(false); }, [open]);
   useEffect(() => {
     if (!open) return;
     const off = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
@@ -185,13 +188,25 @@ function WalletBox() {
   if (!b.writer?.accountId) {
     return <button className="btn primary sm" onClick={() => b.handle!.modal.show()}>Connect wallet</button>;
   }
+  const account = b.writer.accountId;
+  const name = b.nameFor(account);
+  const save = () => { b.setDisplayName(account, draft); setEditing(false); setOpen(false); };
   return (
     <div className="wallet" ref={box}>
-      <button className="wallet-id mono" title={b.writer.accountId} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
-        {short(b.writer.accountId)}<span className="caret" aria-hidden>▾</span>
+      <button className={`wallet-id ${name ? '' : 'mono'}`} title={account} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
+        {name ?? short(account)}<span className="caret" aria-hidden>▾</span>
       </button>
       {open && (
         <div className="wallet-menu" role="menu">
+          <div className="wallet-menu-acct mono" title={account}>{short(account)}</div>
+          {editing ? (
+            <form className="wallet-name-form" onSubmit={(e) => { e.preventDefault(); save(); }}>
+              <input autoFocus value={draft} maxLength={32} placeholder="e.g. Mia" onChange={(e) => setDraft(e.target.value)} aria-label="Display name" />
+              <button className="btn primary sm" type="submit">Save</button>
+            </form>
+          ) : (
+            <button role="menuitem" onClick={() => { setDraft(name ?? ''); setEditing(true); }}>{name ? 'Change display name' : 'Set a display name'}</button>
+          )}
           <button role="menuitem" onClick={async () => { setOpen(false); (await b.handle!.selector.wallet()).signOut(); }}>Sign out</button>
         </div>
       )}
