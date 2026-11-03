@@ -99,6 +99,9 @@ nav a.active::before { content: ""; position: absolute; }
   font-size: 12px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; cursor: pointer;
 }
 .wallet .wallet-id:hover { border-color: var(--ink-2); }
+.wallet .wallet-label { max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.net-label { white-space: nowrap; }
+@media (max-width: 480px) { .wallet .wallet-label { max-width: 30vw; } .top-right { gap: 8px; } }
 .wallet .caret { font-size: 10px; color: var(--ink-2); }
 .wallet-menu {
   position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; min-width: 140px; padding: 4px;

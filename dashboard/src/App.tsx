@@ -195,7 +195,7 @@ function WalletBox() {
   return (
     <div className="wallet" ref={box}>
       <button className={`wallet-id ${name ? '' : 'mono'}`} title={account} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
-        {name ?? short(account)}<span className="caret" aria-hidden>▾</span>
+        <span className="wallet-label">{name ?? short(account)}</span><span className="caret" aria-hidden>▾</span>
       </button>
       {open && (
         <div className="wallet-menu" role="menu">
