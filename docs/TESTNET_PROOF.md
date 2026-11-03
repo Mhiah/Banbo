@@ -23,3 +23,7 @@ In run 4, Claude first recognised the redirect as a likely scam and declined. It
 How these were checked, honestly:
 - The emails were sent from Gmail to the same Gmail account, so they carry no DKIM signature; the MCP server labelled their amounts `email:unverified`. With a signed email from a trusted sender, an amount within the mandate's limits is paid without waiting.
 - The origin labels came from the MCP server, run on the owner's PC, which the owner vouches for (`set_label_vouch`). The TEE runtime (`tee-agent/`) was not used in these runs.
+
+## A vault created from the website
+
+On 3 November 2026 a new testnet account, `banbo-user-mia.testnet`, connected a wallet on the [live dashboard](https://mhiah.github.io/Banbo/) and clicked **Create a vault** with the name "Nectar Beauty". One wallet-signed transaction to the factory `banbo-vaults.testnet` created `nectarbeauty.banbo-vaults.testnet`, funded it with 9 NEAR, deployed the factory's copy of the Banbo contract and set the caller as its owner: [3TX94gaU…hDJWUS](https://testnet.nearblocks.io/txns/3TX94gaU5PwBPTXr6QRqBXYJbuHeAeYjWSBgw6hDJWUS). No command line was used.

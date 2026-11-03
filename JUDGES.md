@@ -15,7 +15,7 @@ Open **[the demo vault on the live dashboard](https://mhiah.github.io/Banbo/#/ov
 
 **Live runs with Claude** (paid, refused, held then approved, redirect refused on-chain), each with its explorer link: [docs/TESTNET_PROOF.md](docs/TESTNET_PROOF.md).
 
-With a testnet wallet you can also create your own vault: click **Connect wallet**, and an account with no vault is offered **Create a vault** (one transaction, about 9 test NEAR). Connecting the same wallet on any device opens that vault again. Then connect an agent to it (**Agents → Connect a new agent**).
+With a testnet wallet you can also create your own vault: click **Connect wallet**, and an account with no vault is offered **Create a vault** (one transaction, about 9 test NEAR). Connecting the same wallet on any device opens that vault again. A vault created this way on testnet: [docs/TESTNET_PROOF.md](docs/TESTNET_PROOF.md#a-vault-created-from-the-website). Then connect an agent to it (**Agents → Connect a new agent**).
 
 ## 2. Run the attack locally
 
