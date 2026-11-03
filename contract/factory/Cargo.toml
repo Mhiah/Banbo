@@ -2,7 +2,7 @@
 name = "banbo-factory"
 version = "0.1.0"
 edition = "2021"
-description = "Creates Banbo vaults in one transaction, each running the same audited code by its hash (a NEAR global contract)"
+description = "Creates Banbo vaults in one transaction, each running the copy of the Banbo contract the factory stores"
 license = "MIT"
 publish = false
 

@@ -14,7 +14,7 @@ export default function CreateVault() {
   const [h, setH] = useState<WalletHandle | null>(null);
   const [account, setAccount] = useState<string | null>(null);
   const [info, setInfo] = useState<FactoryInfo | null>(null);
-  const [f, setF] = useState({ name: '', deposit: '3', cap: '1' });
+  const [f, setF] = useState({ name: '', deposit: '9', cap: '1' });
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -45,6 +45,8 @@ export default function CreateVault() {
     );
   }
 
+  // min_deposit = code storage + 1 NEAR of working balance (see contract/factory).
+  const codeStorage = info ? (BigInt(info.min_deposit) - 10n ** 24n).toString() : '0';
   const name = f.name.trim().toLowerCase();
   const vaultId = name ? `${name}.${factory}` : `yourname.${factory}`;
   const submit = async (e: FormEvent) => {
@@ -54,7 +56,8 @@ export default function CreateVault() {
       if (!account) { h.modal.show(); return; }
       if (!NAME.test(name)) throw new Error('Name: 2–32 lowercase letters or digits, words joined by - or _.');
       const deposit = toYocto(f.deposit);
-      if (info && BigInt(deposit) < BigInt(info.min_deposit)) throw new Error(`Start with at least ${near(info.min_deposit)} NEAR: the vault keeps 0.5 NEAR back for its storage and gas.`);
+      if (info && !info.vault_code_hash) throw new Error('Vault creation isn’t open yet on this network.');
+      if (info && BigInt(deposit) < BigInt(info.min_deposit)) throw new Error(`Start with at least ${near(info.min_deposit)} NEAR: about ${near(codeStorage)} NEAR stays locked to store the vault’s code, and the rest is its working balance.`);
       const cap = toYocto(f.cap);
       if (BigInt(cap) === 0n) throw new Error('Set a daily limit above 0.');
       setErr(''); setBusy(true);
@@ -84,7 +87,7 @@ export default function CreateVault() {
             <label className="field">
               <span>Starting balance (NEAR)</span>
               <input value={f.deposit} onChange={set('deposit')} inputMode="decimal" />
-              <small>Moves from your wallet into the vault. 0.5 NEAR stays back for storage and gas.</small>
+              <small>Moves from your wallet into the vault.{info ? <> About {near(codeStorage)} NEAR stays locked to store the vault’s code, and 0.5 NEAR stays back for gas.</> : null}</small>
             </label>
             <label className="field">
               <span>Daily limit for all agents (NEAR)</span>
@@ -99,8 +102,8 @@ export default function CreateVault() {
             </button>
           </div>
           <p className="muted xs">
-            Every vault runs the same published Banbo contract, identified on-chain by its code hash
-            {info ? <> <span className="mono">{info.vault_code_hash}</span></> : null}. Nobody, including the factory, can change a vault’s code later.
+            Every vault runs a copy of the published Banbo contract, with the code hash
+            {info?.vault_code_hash ? <> <span className="mono">{info.vault_code_hash}</span></> : null}. A vault has no access keys, so nobody, including the factory, can change its code later.
             If creation fails, your deposit comes back.
           </p>
         </form>

@@ -5,7 +5,7 @@
 #   scripts/reproducible-build.sh --check    build, fail if it differs from the committed wasm
 #   scripts/reproducible-build.sh --account banbo.near [--network mainnet]
 #                                            build, compare with the code deployed on that account
-#                                            (or the global contract hash it uses, for factory vaults)
+#                                            (factory vaults too)
 #
 # NEAR's code hash is base58(sha256(wasm)), the same value explorers show.
 set -euo pipefail

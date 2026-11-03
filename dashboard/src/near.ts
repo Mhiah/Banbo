@@ -446,7 +446,7 @@ export function walletWriter(h: WalletHandle, contractId: string): Writer {
   };
 }
 
-export interface FactoryInfo { owner: string; vault_code_hash: string; vaults_created: number; min_deposit: string }
+export interface FactoryInfo { owner: string; vault_code_hash: string | null; vaults_created: number; min_deposit: string }
 
 /**
  * Create a vault through the factory, signed by the connected wallet. Resolves
@@ -457,7 +457,7 @@ export async function createVault(h: WalletHandle, factory: string, name: string
   const w = await h.selector.wallet();
   const out = await w.signAndSendTransaction({
     receiverId: factory,
-    actions: [actionCreators.functionCall('create_vault', { name, period_ms: periodMs, shared_cap: sharedCapYocto }, 100_000_000_000_000n, BigInt(depositYocto))],
+    actions: [actionCreators.functionCall('create_vault', { name, period_ms: periodMs, shared_cap: sharedCapYocto }, 300_000_000_000_000n, BigInt(depositYocto))],
   });
   if (!out) throw new Error('The wallet didn’t return a result. Check your wallet’s activity, then reload.');
   const status = out.status as { Failure?: unknown; SuccessValue?: string };

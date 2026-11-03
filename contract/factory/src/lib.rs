@@ -1,36 +1,48 @@
 //! Banbo factory: creates a vault in one transaction.
 //!
-//! `create_vault("acme", ...)` makes `acme.<factory>` and, atomically in one
-//! receipt, funds it, points it at the Banbo contract by **code hash** (a NEAR
-//! global contract, so every vault runs exactly the same published code and
-//! nobody, including the factory's owner, can change a vault's code later),
-//! and initializes it with the caller as its owner. If any step fails the
+//! The factory keeps one copy of the Banbo contract (set by its owner with
+//! `set_vault_code`). `create_vault("acme", ...)` makes `acme.<factory>` and,
+//! atomically in one receipt, funds it, deploys that exact code and
+//! initializes it with the caller as its owner. A vault has no access key, so
+//! nobody, including the factory's owner, can change its code afterwards; anyone
+//! can check it against the published source by its code hash
+//! (`scripts/reproducible-build.sh --account <vault>`). If any step fails the
 //! account isn't created and the deposit goes back to the caller.
+//!
+//! The vault pays for its own copy of the code from the creation deposit
+//! (NEAR storage staking: about 7.7 NEAR for banbo.wasm), so the deposit must
+//! cover that plus a working balance.
 use near_sdk::json_types::{Base58CryptoHash, U128};
 use near_sdk::serde_json::json;
 use near_sdk::{env, near, require, AccountId, Gas, NearToken, PanicOnDefault, Promise, PromiseError};
 
-/// Smallest deposit a new vault can start with: its own storage plus room to
-/// pay. The vault keeps 0.5 NEAR back for storage and gas.
-pub const MIN_DEPOSIT: NearToken = NearToken::from_millinear(1_500);
+/// What a new vault needs on top of its code's storage: its own state and
+/// records, plus the 0.5 NEAR the vault always keeps back for gas.
+pub const MIN_WORKING_DEPOSIT: NearToken = NearToken::from_near(1);
 const INIT_GAS: Gas = Gas::from_tgas(30);
 const CALLBACK_GAS: Gas = Gas::from_tgas(10);
+const CODE_KEY: &[u8] = b"vault_code";
 
 #[near(contract_state)]
 #[derive(PanicOnDefault)]
 pub struct Factory {
-    /// Can point *future* vaults at a newer published version. Existing
-    /// vaults keep the code they were created with.
+    /// Can set the code *future* vaults get. Existing vaults keep the code
+    /// they were created with.
     owner: AccountId,
-    vault_code_hash: Base58CryptoHash,
+    /// sha256 of the stored vault code, as NEAR shows code hashes.
+    vault_code_hash: Option<Base58CryptoHash>,
+    vault_code_len: u64,
     created: u64,
 }
 
 #[near(serializers = [json])]
 pub struct FactoryInfo {
     pub owner: AccountId,
-    pub vault_code_hash: Base58CryptoHash,
+    /// The code hash every new vault will have (None until the code is set).
+    pub vault_code_hash: Option<Base58CryptoHash>,
     pub vaults_created: u64,
+    /// Smallest deposit `create_vault` accepts: the code's storage plus a
+    /// working balance.
     pub min_deposit: U128,
 }
 
@@ -49,32 +61,36 @@ pub fn valid_name(name: &str) -> bool {
 #[near]
 impl Factory {
     #[init]
-    pub fn new(owner: AccountId, vault_code_hash: Base58CryptoHash) -> Self {
-        Self { owner, vault_code_hash, created: 0 }
+    pub fn new(owner: AccountId) -> Self {
+        Self { owner, vault_code_hash: None, vault_code_len: 0, created: 0 }
     }
 
     /// Create `name.<factory>`, owned by the caller. The whole attached deposit
-    /// goes to the vault. `period_ms` is the budget period (e.g. 86400000 for a
+    /// goes to the vault; part of it stays locked as the storage for the
+    /// vault's code. `period_ms` is the budget period (e.g. 86400000 for a
     /// day) and `shared_cap` the most all agents together may spend in one.
     #[payable]
     pub fn create_vault(&mut self, name: String, period_ms: u64, shared_cap: U128) -> Promise {
         require!(valid_name(&name), "vault name: 2-32 lowercase letters, digits, - or _");
+        require!(self.vault_code_hash.is_some(), "the factory has no vault code yet");
         let deposit = env::attached_deposit();
-        require!(deposit >= MIN_DEPOSIT, format!("attach at least {MIN_DEPOSIT} for the vault's storage"));
+        let min = self.min_deposit();
+        require!(deposit >= min, format!("attach at least {min} for the vault's code storage and working balance"));
         require!(period_ms > 0, "period_ms must be > 0");
+        let code = env::storage_read(CODE_KEY).unwrap_or_else(|| env::panic_str("vault code missing"));
         let owner = env::predecessor_account_id();
         let vault: AccountId = format!("{name}.{}", env::current_account_id()).parse().unwrap();
         let args = json!({ "owner": owner, "period_ms": period_ms, "shared_cap": shared_cap }).to_string().into_bytes();
         Promise::new(vault.clone())
             .create_account()
             .transfer(deposit)
-            .use_global_contract(self.vault_code_hash)
+            .deploy_contract(code)
             .function_call("new", args, NearToken::from_yoctonear(0), INIT_GAS)
             .then(Self::ext(env::current_account_id()).with_static_gas(CALLBACK_GAS).on_created(vault, owner, U128(deposit.as_yoctonear())))
     }
 
     /// Returns the new vault's account id, or refunds the deposit if creation
-    /// failed (the name was taken, or initialization failed).
+    /// failed (the name was taken, or deploying or initializing failed).
     #[private]
     pub fn on_created(&mut self, vault: AccountId, owner: AccountId, deposit: U128, #[callback_result] r: Result<(), PromiseError>) -> Option<AccountId> {
         if r.is_ok() {
@@ -88,31 +104,18 @@ impl Factory {
         }
     }
 
-    /// Point future vaults at another published version of the Banbo contract.
-    pub fn set_vault_code_hash(&mut self, vault_code_hash: Base58CryptoHash) {
-        require!(env::predecessor_account_id() == self.owner, "only the factory owner");
-        self.vault_code_hash = vault_code_hash;
-    }
-
-    /// Publish a Banbo wasm (the raw call input) as a global contract by its
-    /// hash, paid from the factory's balance (NEAR burns 10x the normal
-    /// storage cost for global code), and point future vaults at it once it's
-    /// published. Owner only.
-    pub fn publish_vault_code(&mut self) -> Promise {
+    /// Store the Banbo wasm (the raw call input) that future vaults get, and
+    /// return its code hash. The factory's balance pays for storing it. Owner
+    /// only; vaults already created keep their code.
+    pub fn set_vault_code(&mut self) -> Base58CryptoHash {
         require!(env::predecessor_account_id() == self.owner, "only the factory owner");
         let code = env::input().unwrap_or_default();
         require!(code.starts_with(b"\0asm"), "the input must be a wasm file");
-        let hash: [u8; 32] = env::sha256_array(&code);
-        Promise::new(env::current_account_id())
-            .deploy_global_contract(code)
-            .then(Self::ext(env::current_account_id()).with_static_gas(CALLBACK_GAS).on_published(Base58CryptoHash::from(hash)))
-    }
-
-    #[private]
-    pub fn on_published(&mut self, hash: Base58CryptoHash, #[callback_result] r: Result<(), PromiseError>) -> Base58CryptoHash {
-        require!(r.is_ok(), "publishing the vault code failed");
-        self.vault_code_hash = hash;
-        env::log_str(&format!("banbo vault code published: {}", String::from(&hash)));
+        let hash = Base58CryptoHash::from(env::sha256_array(&code));
+        env::storage_write(CODE_KEY, &code);
+        self.vault_code_hash = Some(hash);
+        self.vault_code_len = code.len() as u64;
+        env::log_str(&format!("banbo vault code set: {} ({} bytes)", String::from(&hash), code.len()));
         hash
     }
 
@@ -121,8 +124,14 @@ impl Factory {
             owner: self.owner.clone(),
             vault_code_hash: self.vault_code_hash,
             vaults_created: self.created,
-            min_deposit: U128(MIN_DEPOSIT.as_yoctonear()),
+            min_deposit: U128(self.min_deposit().as_yoctonear()),
         }
+    }
+}
+
+impl Factory {
+    fn min_deposit(&self) -> NearToken {
+        env::storage_byte_cost().saturating_mul(self.vault_code_len as u128).saturating_add(MIN_WORKING_DEPOSIT)
     }
 }
 
@@ -132,16 +141,30 @@ mod tests {
     use near_sdk::test_utils::VMContextBuilder;
     use near_sdk::testing_env;
 
-    fn ctx(caller: &str, deposit: NearToken) {
-        testing_env!(VMContextBuilder::new()
+    const CODE: &[u8] = b"\0asm\x01\0\0\0 a tiny stand-in for banbo.wasm";
+
+    fn ctx_with(caller: &str, deposit: NearToken, input: Vec<u8>) {
+        let mut c = VMContextBuilder::new()
             .current_account_id("banbo-factory.testnet".parse().unwrap())
             .predecessor_account_id(caller.parse().unwrap())
             .attached_deposit(deposit)
-            .build());
+            .account_balance(NearToken::from_near(100))
+            .build();
+        c.input = input.into();
+        testing_env!(c);
+    }
+    fn ctx(caller: &str, deposit: NearToken) {
+        ctx_with(caller, deposit, vec![]);
     }
     fn factory() -> Factory {
         ctx("mia.testnet", NearToken::from_yoctonear(0));
-        Factory::new("mia.testnet".parse().unwrap(), [7u8; 32].into())
+        Factory::new("mia.testnet".parse().unwrap())
+    }
+    fn factory_with_code() -> Factory {
+        let mut f = factory();
+        ctx_with("mia.testnet", NearToken::from_yoctonear(0), CODE.to_vec());
+        f.set_vault_code();
+        f
     }
     fn panics(f: impl FnOnce() + std::panic::UnwindSafe) -> bool {
         std::panic::catch_unwind(f).is_err()
@@ -156,25 +179,42 @@ mod tests {
     }
 
     #[test]
-    fn create_needs_a_valid_name_and_enough_deposit() {
+    fn no_vaults_before_the_code_is_set() {
         let mut f = factory();
-        ctx("alice.testnet", NearToken::from_near(1));
+        assert_eq!(f.get_info().vault_code_hash, None);
+        ctx("alice.testnet", NearToken::from_near(20));
         assert!(panics(move || { f.create_vault("acme".into(), 86_400_000, U128(1)); }));
-        let mut f = factory();
-        ctx("alice.testnet", NearToken::from_near(2));
-        assert!(panics(move || { f.create_vault("Acme".into(), 86_400_000, U128(1)); }));
-        let mut f = factory();
-        ctx("alice.testnet", NearToken::from_near(2));
-        let _ = f.create_vault("acme".into(), 86_400_000, U128(1));
     }
 
     #[test]
-    fn only_the_owner_changes_the_code_hash_for_future_vaults() {
+    fn set_vault_code_records_its_hash_and_raises_the_minimum_deposit() {
+        let f = factory_with_code();
+        let info = f.get_info();
+        assert_eq!(info.vault_code_hash, Some(Base58CryptoHash::from(env::sha256_array(CODE))));
+        let code_storage = env::storage_byte_cost().as_yoctonear() * CODE.len() as u128;
+        assert_eq!(info.min_deposit.0, code_storage + MIN_WORKING_DEPOSIT.as_yoctonear());
+        assert_eq!(env::storage_read(CODE_KEY).unwrap(), CODE);
+    }
+
+    #[test]
+    fn only_wasm_from_the_owner_becomes_vault_code() {
         let mut f = factory();
-        ctx("attacker.testnet", NearToken::from_yoctonear(0));
-        assert!(panics(std::panic::AssertUnwindSafe(|| f.set_vault_code_hash([9u8; 32].into()))));
-        ctx("mia.testnet", NearToken::from_yoctonear(0));
-        f.set_vault_code_hash([9u8; 32].into());
-        assert_eq!(f.get_info().vault_code_hash, Base58CryptoHash::from([9u8; 32]));
+        ctx_with("attacker.testnet", NearToken::from_yoctonear(0), CODE.to_vec());
+        assert!(panics(std::panic::AssertUnwindSafe(|| { f.set_vault_code(); })));
+        ctx_with("mia.testnet", NearToken::from_yoctonear(0), b"not wasm".to_vec());
+        assert!(panics(std::panic::AssertUnwindSafe(|| { f.set_vault_code(); })));
+        assert_eq!(f.get_info().vault_code_hash, None);
+    }
+
+    #[test]
+    fn create_needs_a_valid_name_and_enough_deposit() {
+        let mut f = factory_with_code();
+        let min = f.get_info().min_deposit.0;
+        ctx("alice.testnet", NearToken::from_yoctonear(min - 1));
+        assert!(panics(std::panic::AssertUnwindSafe(|| { f.create_vault("acme".into(), 86_400_000, U128(1)); })));
+        ctx("alice.testnet", NearToken::from_yoctonear(min));
+        assert!(panics(std::panic::AssertUnwindSafe(|| { f.create_vault("Acme".into(), 86_400_000, U128(1)); })));
+        assert!(panics(std::panic::AssertUnwindSafe(|| { f.create_vault("acme".into(), 0, U128(1)); })));
+        let _ = f.create_vault("acme".into(), 86_400_000, U128(1));
     }
 }

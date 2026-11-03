@@ -22,7 +22,7 @@ Run it (Node 20+, Linux x86_64 or macOS Apple Silicon, no NEAR account or Rust n
 
 - [contract/src/lib.rs](https://github.com/Mhiah/Banbo/blob/main/contract/src/lib.rs): the vault; request_payment runs the mandate, origin and firewall checks, on_payout settles or refunds
 - [contract/src/tee.rs](https://github.com/Mhiah/Banbo/blob/main/contract/src/tee.rs): on-chain Intel TDX quote verification
-- [contract/factory/src/lib.rs](https://github.com/Mhiah/Banbo/blob/main/contract/factory/src/lib.rs): creates vaults in one transaction from a NEAR global contract code hash
+- [contract/factory/src/lib.rs](https://github.com/Mhiah/Banbo/blob/main/contract/factory/src/lib.rs): creates vaults in one transaction, each running the copy of banbo.wasm the factory stores (no access keys, so the code can't change)
 - [tee-agent/src/origin/](https://github.com/Mhiah/Banbo/blob/main/tee-agent/src/origin): CaMeL runtime: planner, quarantined reader, labelling interpreter, DKIM sources
 - [mcp/README.md](https://github.com/Mhiah/Banbo/blob/main/mcp/README.md): MCP server so any MCP agent can pay through a vault with a function-call key
 - [demo/src/act-origin.js](https://github.com/Mhiah/Banbo/blob/main/demo/src/act-origin.js): Act 1, invoice fraud against an ordinary firewall and against Banbo

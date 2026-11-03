@@ -327,13 +327,13 @@ NEAR amounts are yoctoNEAR strings; token amounts are in the token's smallest un
 ## Tests
 
 ```bash
-make test-contract   # 131 vault + 3 factory Rust unit tests (policy, invariants, callbacks, tokens, risk rules, private mode,
+make test-contract   # 131 vault + 5 factory Rust unit tests (policy, invariants, callbacks, tokens, risk rules, private mode,
                      #   TEE checks incl. a genuine Intel TDX quote, expiry, recovery, owner controls, history,
                      #   task mandates and origin checks: labels, holds, refusals, vouching; who may initialize a vault)
 make test-sandbox    # 48 integration tests on a local NEAR node: payments, USDC, the paid API, risk rules,
                      #   private mode, the TEE agent runtime against the contract, hardening, and the
                      #   origin runtime (planner/reader/interpreter) against the real contract, the MCP server,
-                     #   and the factory creating vaults from published global code
+                     #   and the factory creating vaults from its stored code
 make verify-build    # rebuild the wasm in Docker and check it matches the committed one
 make test-dashboard  # dashboard unit tests (formatting, origin labels, private-mode crypto)
 make test-tee-agent  # TEE agent tests, incl. the origin runtime: plan validation, DKIM labels, a fooled reader
@@ -402,15 +402,15 @@ OWNER=you.testnet VAULT=vault.you.testnet AGENT=agent.you.testnet VENDOR=vendor.
 
 ### Vaults from the browser: the factory
 
-`contract/factory` creates a vault in one wallet-signed transaction: `create_vault("acme", …)` makes `acme.<factory>`, funds it, points it at the Banbo contract **by code hash** (a [NEAR global contract](https://docs.near.org/smart-contracts/global-contracts)) and initializes it with the caller as owner, all in one receipt. If anything fails, the account isn't created and the deposit is refunded. Every vault runs exactly the published code, and nobody, including the factory's owner, can change an existing vault's code; the factory's owner can only point *future* vaults at a newer version. The dashboard's **Create a vault** page calls it.
+`contract/factory` creates a vault in one wallet-signed transaction: `create_vault("acme", …)` makes `acme.<factory>`, funds it, deploys the copy of `banbo.wasm` the factory holds and initializes it with the caller as owner, all in one receipt. If anything fails, the account isn't created and the deposit is refunded. A vault has no access keys, so nobody, including the factory's owner, can change its code; the factory's owner can only set the code *future* vaults get (`set_vault_code`). The dashboard's **Create a vault** page calls it.
 
-Publishing the code is done once per network and burns 10x normal storage (about 77 NEAR for `banbo.wasm`, test NEAR on testnet):
+Each vault pays for storing its own copy of the code out of its starting balance (NEAR storage staking, about 7.7 NEAR for `banbo.wasm`), so creating one takes about 9 NEAR, which a testnet faucet account covers. Setting up the factory takes about 10 NEAR (its own code plus the stored vault code):
 
 ```bash
 OWNER=you.testnet FACTORY=banbo-vaults.testnet ./scripts/deploy-factory-testnet.sh
 ```
 
-`scripts/reproducible-build.sh --account <vault>` checks a factory vault too: it compares against the global code hash the vault uses.
+`scripts/reproducible-build.sh --account <vault>` checks a factory vault too: its code hash must match the reproducible build.
 
 ## Troubleshooting
 

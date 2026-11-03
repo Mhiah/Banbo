@@ -43,14 +43,14 @@ Act 2 is the crude version (an invoice with hidden instructions to send 9 NEAR t
 
 | Claim | Where to look | How to check |
 |---|---|---|
-| The contract, not the agent, makes the origin decision | `contract/src/lib.rs` (`request_payment`, task and origin checks) | `make test-contract` (131 vault + 3 factory unit tests) |
+| The contract, not the agent, makes the origin decision | `contract/src/lib.rs` (`request_payment`, task and origin checks) | `make test-contract` (131 vault + 5 factory unit tests) |
 | The agent can't move money any other way | Its key is a function-call access key for `request_payment` only | `make test-sandbox`: an agent with only that key fails to transfer NEAR or call admin methods |
 | A failed transfer is refunded exactly once | `on_payout` callback | `make test-sandbox` (a real failed transfer on the local node), Act 3 |
 | The model can't fake an origin label | `mcp/` derives labels itself (DKIM check, amount must appear in the signed email) | `make test-mcp` |
 | The CaMeL runtime labels every value | `tee-agent/src/origin/` (planner, quarantined reader, interpreter) | `make test-tee-agent`, and the origin runtime against the real contract in `make test-sandbox` |
 | The TEE quote is verified on-chain | `contract/src/tee.rs`, tested with a genuine Intel TDX quote | `make test-contract` |
 | The deployed code is the published source | Reproducible Docker build, pinned by digest | `make verify-build` (needs Docker); `scripts/reproducible-build.sh --account vault.banbo-mia.testnet` |
-| Factory vaults all run the same, unchangeable code | `contract/factory` uses a NEAR global contract by code hash | `contract/factory` unit tests and `demo/test/factory.test.js` |
+| Factory vaults all run the published, unchangeable code | `contract/factory` deploys the code it holds; a vault has no access keys | `contract/factory` unit tests, `demo/test/factory.test.js`, and `scripts/reproducible-build.sh --account <vault>` |
 
 `make test` runs all of it (48 sandbox integration tests on top of the unit tests).
 
