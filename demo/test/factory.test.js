@@ -29,7 +29,7 @@ before(async () => {
   root = worker.rootAccount;
   // The factory pays to store one copy of the vault code (~7.7 NEAR).
   factory = await root.createSubAccount('factory', { initialBalance: N(20) });
-  alice = await root.createSubAccount('alice', { initialBalance: N(20) });
+  alice = await root.createSubAccount('alice', { initialBalance: N(40) });
   mallory = await root.createSubAccount('mallory', { initialBalance: N(20) });
   await factory.deploy(FACTORY_WASM);
   await factory.call(factory, 'new', { owner: factory.accountId });
