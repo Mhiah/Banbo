@@ -61,6 +61,8 @@ test('create_vault: one transaction gives the caller an initialized vault runnin
   await alice.call(vault, 'allow_recipient', { recipient: mallory.accountId });
   assert.deepEqual(await vault.view('list_allowlist', {}), [mallory.accountId]);
   assert.equal((await factory.view('get_info', {})).vaults_created, 1);
+  // The factory lists it under its owner, so the dashboard finds it on any device.
+  assert.deepEqual(await factory.view('get_vaults', { owner: alice.accountId }), [vaultId]);
 });
 
 test('a taken name refunds the deposit; a stranger cannot re-initialize a vault', async () => {
@@ -73,6 +75,7 @@ test('a taken name refunds the deposit; a stranger cannot re-initialize a vault'
   const vault = root.getAccount(`acme.${factory.accountId}`);
   await assert.rejects(mallory.call(vault, 'new', { owner: mallory.accountId, period_ms: DAY_MS, shared_cap: N(5) }));
   assert.equal((await vault.view('get_config', {})).owner, alice.accountId);
+  assert.deepEqual(await factory.view('get_vaults', { owner: mallory.accountId }), []);
 });
 
 test('create_vault rejects a bad name or too small a deposit', async () => {

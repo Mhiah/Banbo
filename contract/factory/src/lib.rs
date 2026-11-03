@@ -25,6 +25,9 @@ const CODE_KEY: &[u8] = b"vault_code";
 /// Display names live under their own keys, so adding them didn't change the
 /// factory's state layout.
 const NAME_PREFIX: &[u8] = b"name:";
+/// The vaults each owner created here, also under their own keys, so a wallet
+/// can find its vault from any device.
+const VAULTS_PREFIX: &[u8] = b"vaults:";
 pub const MAX_NAME_LEN: usize = 32;
 
 #[near(contract_state)]
@@ -99,6 +102,7 @@ impl Factory {
     pub fn on_created(&mut self, vault: AccountId, owner: AccountId, deposit: U128, #[callback_result] r: Result<(), PromiseError>) -> Option<AccountId> {
         if r.is_ok() {
             self.created += 1;
+            self.remember_vault(&owner, &vault);
             env::log_str(&format!("banbo vault created: {vault} owned by {owner}"));
             Some(vault)
         } else {
@@ -149,6 +153,21 @@ impl Factory {
         if refund > 0 { Promise::new(who).transfer(NearToken::from_yoctonear(refund)).detach(); }
     }
 
+    /// The vaults `owner` created through this factory, oldest first. A vault's
+    /// owner can change later, so callers should check `get_config().owner`.
+    pub fn get_vaults(&self, owner: AccountId) -> Vec<AccountId> {
+        self.vaults_of(&owner)
+    }
+
+    /// Add a vault this factory created before it kept the list above. Factory
+    /// owner only; it must be `<name>.<factory>`. The factory pays the storage.
+    pub fn record_vault(&mut self, vault: AccountId, owner: AccountId) {
+        require!(env::predecessor_account_id() == self.owner, "only the factory owner");
+        let suffix = format!(".{}", env::current_account_id());
+        require!(vault.as_str().ends_with(&suffix), "not a vault of this factory");
+        self.remember_vault(&owner, &vault);
+    }
+
     pub fn get_display_name(&self, account_id: AccountId) -> Option<String> {
         env::storage_read(&[NAME_PREFIX, account_id.as_bytes()].concat()).and_then(|v| String::from_utf8(v).ok())
     }
@@ -164,6 +183,27 @@ impl Factory {
 }
 
 impl Factory {
+    fn vaults_key(owner: &AccountId) -> Vec<u8> {
+        [VAULTS_PREFIX, owner.as_bytes()].concat()
+    }
+    fn vaults_of(&self, owner: &AccountId) -> Vec<AccountId> {
+        env::storage_read(&Self::vaults_key(owner))
+            .map(|v| String::from_utf8(v).unwrap_or_default())
+            .unwrap_or_default()
+            .split('\n')
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| s.parse().ok())
+            .collect()
+    }
+    /// Append `vault` to `owner`'s list (no duplicates). About 50 bytes of
+    /// storage, paid from the factory's balance.
+    fn remember_vault(&mut self, owner: &AccountId, vault: &AccountId) {
+        let mut list = self.vaults_of(owner);
+        if list.contains(vault) { return; }
+        list.push(vault.clone());
+        let joined = list.iter().map(|a| a.as_str()).collect::<Vec<_>>().join("\n");
+        env::storage_write(&Self::vaults_key(owner), joined.as_bytes());
+    }
     fn min_deposit(&self) -> NearToken {
         env::storage_byte_cost().saturating_mul(self.vault_code_len as u128).saturating_add(MIN_WORKING_DEPOSIT)
     }
@@ -253,6 +293,24 @@ mod tests {
         assert!(panics(std::panic::AssertUnwindSafe(|| f.set_display_name("a\nb".into()))));
         f.set_display_name("".into());
         assert_eq!(f.get_display_name("alice.testnet".parse().unwrap()), None);
+    }
+
+    #[test]
+    fn vaults_are_listed_per_owner_and_only_the_owner_backfills() {
+        let mut f = factory();
+        let alice: AccountId = "alice.testnet".parse().unwrap();
+        let v: AccountId = "acme.banbo-factory.testnet".parse().unwrap();
+        assert!(f.get_vaults(alice.clone()).is_empty());
+        ctx("mallory.testnet", NearToken::from_yoctonear(0));
+        assert!(panics(std::panic::AssertUnwindSafe(|| f.record_vault(v.clone(), alice.clone()))));
+        ctx("mia.testnet", NearToken::from_yoctonear(0));
+        assert!(panics(std::panic::AssertUnwindSafe(|| f.record_vault("acme.other.testnet".parse().unwrap(), alice.clone()))));
+        f.record_vault(v.clone(), alice.clone());
+        f.record_vault(v.clone(), alice.clone());
+        let w: AccountId = "shop.banbo-factory.testnet".parse().unwrap();
+        f.record_vault(w.clone(), alice.clone());
+        assert_eq!(f.get_vaults(alice), vec![v, w]);
+        assert!(f.get_vaults("bob.testnet".parse().unwrap()).is_empty());
     }
 
     #[test]

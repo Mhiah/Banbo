@@ -37,9 +37,14 @@ function vaultCandidates(n: NetworkId, account: string): string[] {
   if (f && base) out.push(`${base}.${f}`);
   return out;
 }
-/** The first candidate vault this account owns, or '' if none. */
+/** A vault this account owns, or '' if none: the newest one the factory
+ * created for it, else one named after the account. Works on any device. */
 async function findOwnVault(n: NetworkId, account: string): Promise<string> {
-  for (const id of vaultCandidates(n, account)) {
+  const f = FACTORY[n];
+  const made = f
+    ? await view<string[]>(NETWORKS[n].nodeUrl, f, 'get_vaults', { owner: account }).catch(() => [] as string[])
+    : [];
+  for (const id of [...made.reverse(), ...vaultCandidates(n, account)]) {
     try {
       const cfg = await view<{ owner: string }>(NETWORKS[n].nodeUrl, id, 'get_config');
       if (cfg.owner === account) return id;
