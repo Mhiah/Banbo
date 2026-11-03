@@ -150,7 +150,7 @@ export default function Overview() {
           )}
         </Panel>
       </div>
-      <p className="footnote">All figures are read from the vault contract every 2 seconds. {STATUS.InFlight.label} means funds are reserved and the transfer hasn’t been confirmed yet.</p>
+      <p className="footnote">All figures are read from the vault contract and refresh every few seconds. {STATUS.InFlight.label} means funds are reserved and the transfer hasn’t been confirmed yet.</p>
     </>
   );
 }
