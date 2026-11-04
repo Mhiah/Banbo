@@ -1,6 +1,6 @@
 # Banbo: the security layer for AI agent wallets
 
-**Enforced by the contract, not the prompt.**
+**CaMeL's defence against prompt injection, enforced on-chain.**
 
 Banbo lets AI agents pay from a shared treasury without being tricked into paying scammers. The owner gives each agent a **task mandate**: one job, who it may pay, how much, until when, and which senders may set an amount. Every payment the agent asks for carries labels saying **where its recipient and amount came from**, following [CaMeL, *Defeating Prompt Injections by Design*](https://arxiv.org/abs/2503.18813), research from Google, Google DeepMind and ETH Zurich. The NEAR contract that holds the money checks those labels against the mandate before anything is paid.
 

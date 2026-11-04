@@ -1,5 +1,7 @@
 # Judging Banbo
 
+**CaMeL's defence against prompt injection, enforced on-chain.**
+
 Banbo is the security layer for AI agent wallets. An agent pays from a NEAR vault contract, and the contract decides every payment. Beyond limits and an allowlist, it checks **who said so**: under a task mandate, a recipient taken from an email is refused, and an amount taken from an untrusted email is held for the owner. This follows CaMeL ([arXiv 2503.18813](https://arxiv.org/abs/2503.18813)), with the policy enforced on-chain instead of inside the agent.
 
 This page is the shortest path to checking that claim yourself.
