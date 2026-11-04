@@ -65,7 +65,7 @@ Refusals are logged on-chain with the labels that caused them (the latest 50 are
 **4. Why NEAR.** The rule only holds if the agent can't go around it, and NEAR provides the pieces:
 
 - **The contract holds the funds.** The agent never has the treasury's keys.
-- **Function-call access keys.** The agent's key can call only `request_payment` on the vault, so it has no other way to move money.
+- **Function-call access keys.** The agent's key can call only `request_payment` on the vault, so it has no other way to move money ([what the key can and can't do](#the-agents-key)).
 - **On-chain TEE verification.** The contract verifies the agent's Intel TDX quote itself before believing its labels.
 - **Asynchronous callbacks.** Every payment, in NEAR or USDC (NEP-141), is reserved first and settled or refunded exactly once in a callback.
 
@@ -239,6 +239,15 @@ The **Privacy** page turns on encrypted memos, manages hidden vendors, approves 
 ![Privacy](docs/screenshots/privacy.png)
 
 ## Technical details
+
+### The agent's key
+
+The agent runtime (the MCP server or `tee-agent`) holds one **function-call access key**, never a full-access key (the MCP server refuses to start with one). On NEAR such a key is limited by the protocol itself:
+
+- It can call only the methods it was created for (here just `request_payment`) on one contract (the vault).
+- It can't attach NEAR to a call, transfer NEAR, add or delete keys, or deploy code. So even a fully hijacked agent can only *ask* the vault to pay, and the vault applies every rule.
+- Its gas comes from an **allowance** set when the key is added (`--allowance '1 NEAR'` in `scripts/deploy-testnet.sh`). Each call is charged up to its prepaid gas, about 0.01 NEAR at the minimum gas price, so 1 NEAR covers roughly 100 payment requests. When the allowance runs out the key stops working; nothing is lost, and the account owner adds a fresh key. The gas is paid from the agent account's own balance, so that account needs a little NEAR.
+- The agent account's full-access key stays with its owner, away from the agent's runtime.
 
 ### Risk rules
 
