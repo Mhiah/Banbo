@@ -8,7 +8,12 @@ export default defineConfig({
   base: './',
   // Some wallet dependencies read process.env (e.g. @near-js/accounts'
   // DEFAULT_FINALITY), which doesn't exist in the browser.
-  define: { global: 'globalThis', 'process.env': '{}' },
+  define: {
+    global: 'globalThis',
+    'process.env': '{}',
+    // Vercel sets VERCEL=1 while building: build the public testnet site there.
+    ...(process.env.VERCEL ? { 'import.meta.env.VITE_HOSTED': JSON.stringify('1') } : {}),
+  },
   resolve: { alias: { buffer: 'buffer/' } },
   server: { port: 5173 },
 });
