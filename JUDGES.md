@@ -19,6 +19,8 @@ Open **[the demo vault on the live dashboard](https://mhiah.github.io/Banbo/#/ov
 
 **Live runs with Claude** (paid, refused, held then approved, redirect refused on-chain), each with its explorer link: [docs/TESTNET_PROOF.md](docs/TESTNET_PROOF.md).
 
+**The CaMeL runtime with live Claude:** Claude as the planner and the quarantined reader on a local NEAR node. The real invoice was paid, and the forged amount Claude's reader extracted was held by the contract. Public GitHub Actions log: [docs/LIVE_CLAUDE_RUN.md](docs/LIVE_CLAUDE_RUN.md).
+
 With a testnet wallet you can also create your own vault: click **Connect wallet**, and an account with no vault is offered **Create a vault** (one transaction, about 9 test NEAR). Connecting the same wallet on any device opens that vault again. A vault created this way on testnet: [docs/TESTNET_PROOF.md](docs/TESTNET_PROOF.md#a-vault-created-from-the-website). Then connect an agent to it (**Agents → Connect a new agent**).
 
 ## 2. Run the attack locally
@@ -68,7 +70,6 @@ We'd rather you read this here than find it yourself. The full list is in [READM
 
 - Testnet only, unaudited. Don't put real funds in it.
 - The TEE agent has been tested with a genuine Intel TDX quote verified on-chain, but not yet deployed in a live TDX VM. The demo uses owner vouching instead.
-- The origin runtime (`tee-agent/`) has been tested end to end with scripted models; runs of it with a live model still need checking. Claude has paid through the MCP server on testnet ([docs/TESTNET_PROOF.md](docs/TESTNET_PROOF.md)).
 - Private mode hides the vendor list and memos, not payments: amounts and recipients of made payments are public.
 
 ## Where things are
