@@ -453,3 +453,5 @@ See [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
 ## License
 
 MIT
+
+AI-assisted coding.
