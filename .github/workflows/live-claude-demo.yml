@@ -1,0 +1,47 @@
+# Runs the 8-act demo on a local NEAR node with Claude as the agent: in Act 1
+# Claude is the CaMeL planner and the quarantined reader, in Act 2 the agent
+# that reads the poisoned invoice. Started by hand (Actions tab, "Run
+# workflow"). Needs the repository secret ANTHROPIC_API_KEY; GitHub masks it in
+# the log. The full log and the transaction report are kept as an artifact.
+name: Demo with live Claude
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  demo:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            demo/package-lock.json
+            tee-agent/package-lock.json
+            mcp/package-lock.json
+      - run: npm ci
+        working-directory: tee-agent
+      - run: npm ci
+        working-directory: mcp
+      - run: npm ci
+        working-directory: demo
+      - name: 8-act demo with Claude
+        working-directory: demo
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then echo "Add the ANTHROPIC_API_KEY repository secret first." >&2; exit 1; fi
+          set -o pipefail
+          npm run demo 2>&1 | tee demo-live-claude.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: demo-live-claude
+          path: |
+            demo/demo-live-claude.log
+            demo/out/demo-report.json

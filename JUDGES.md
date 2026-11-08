@@ -6,6 +6,8 @@ Banbo is the security layer for AI agent wallets. An agent pays from a NEAR vaul
 
 This page is the shortest path to checking that claim yourself.
 
+**In 30 seconds, no wallet:** open [the testnet vault's Activity page](https://mhiah.github.io/Banbo/#/activity?vault=vault.banbo-mia.testnet). It shows real payments Claude asked for on NEAR testnet: paid, held for the owner, and refused by the contract, each with the rule that decided it.
+
 ## 1. Look at the live vault (no install)
 
 Open **[the demo vault on the live dashboard](https://mhiah.github.io/Banbo/#/overview?vault=vault.banbo-mia.testnet)**. It reads the testnet vault `vault.banbo-mia.testnet` straight from the chain, no wallet needed. Anyone can look; only the owner's wallet can change anything.
