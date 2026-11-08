@@ -240,7 +240,7 @@ function NewTask({ open, onClose }: { open: boolean; onClose: () => void }) {
             </select>
           </label>
           {field('budget', `Budget (${asset.symbol})`, undefined, '100')}
-          {field('max', `Max per payment`, undefined, '50')}
+          {field('max', `Max per payment (${asset.symbol})`, undefined, '50')}
         </div>
         {field('sources', 'Trust amounts from', 'Senders allowed to set an amount without your review, e.g. email:acme.com. Leave empty to review every amount from a document.', 'email:acme.com')}
         {field('days', 'Ends in (days)')}

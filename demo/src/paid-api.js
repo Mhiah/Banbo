@@ -78,7 +78,7 @@ export async function startPaidApi({ vendorId, vaultId, tokenId, symbol = 'USDC'
         const id = `q-${crypto.randomBytes(6).toString('hex')}`;
         const quote = {
           id, path: u.pathname, price: item.price, token: tokenId, symbol, recipient: vendorId, vault: vaultId,
-          memo: `${symbol} ${item.description}`, expires_at: Date.now() + QUOTE_TTL_MS,
+          memo: `API call: ${item.description}`, expires_at: Date.now() + QUOTE_TTL_MS,
         };
         quotes.set(id, { ...quote, redeemed: false });
         stats.quoted += 1;

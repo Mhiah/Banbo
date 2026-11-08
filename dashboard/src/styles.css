@@ -31,7 +31,7 @@
   font-feature-settings: "cv11", "ss01";
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; overflow-x: hidden; }
+html, body { margin: 0; overflow-x: clip; }
 a { color: inherit; }
 h1, h2, h3, h4 { margin: 0; font-weight: 600; letter-spacing: -0.01em; }
 p { margin: 0 0 8px; }
@@ -235,12 +235,12 @@ main .alert { margin: 0 0 16px; }
   .table.stack td[data-label] { grid-column: 1 / -1; display: flex; justify-content: space-between; gap: 12px; }
   .table.stack td.st[data-label] { grid-column: 2; display: block; }
   .table.stack td[data-label]:not(.st)::before { content: attr(data-label); color: var(--ink-2); font-size: 12.5px; }
-  .table.feed tr { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "rcpt amt" "agent status" "details time"; column-gap: 12px; row-gap: 3px; }
+  .table.feed tr { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "rcpt amt" "agent agent" "details status" "details time"; column-gap: 12px; row-gap: 3px; }
   .table.feed .c-rcpt { grid-area: rcpt; min-width: 0; }
   .table.feed .c-amt { grid-area: amt; text-align: right; font-weight: 500; }
   .table.feed .c-agent { grid-area: agent; color: var(--ink-2); min-width: 0; }
   .table.feed .c-agent .mono::before { content: "by "; font-family: var(--font); }
-  .table.feed .c-status { grid-area: status; text-align: right; }
+  .table.feed .c-status { grid-area: status; text-align: right; align-self: start; }
   .table.feed .c-time { grid-area: time; text-align: right; font-size: 12.5px; align-self: end; }
   .table.feed .c-details { grid-area: details; max-width: none; white-space: normal; }
   .table.feed .mono { white-space: normal; word-break: break-all; }
@@ -436,7 +436,7 @@ h3.sub { font-size: 13px; font-weight: 600; margin: 18px 0 2px; }
 .task-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 .task-actions { display: flex; gap: 8px; }
 .task-kv { margin: 0; }
-.badge.chip { margin: 0 6px 4px 0; }
+.badge.chip { margin: 0 0 4px 6px; }
 .strong { font-weight: 600; }
 .origin-policy { margin-top: 14px; align-items: center; }
 .origin-box { border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px; margin: 12px 0; background: var(--surface-2, var(--surface)); }

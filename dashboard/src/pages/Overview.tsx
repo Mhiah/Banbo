@@ -26,7 +26,7 @@ export default function Overview() {
             <div className="sub">
               <Amount yocto={bal.available} /> available to agents
               <span className="sep">·</span>
-              <span className="muted">{near(bal.operating_reserve)} kept for storage and gas</span>
+              <span className="muted">{near((BigInt(bal.storage_cost) + BigInt(bal.operating_reserve)).toString())} kept for storage and gas</span>
             </div>
           </div>
           <div className="treasury-budget">
