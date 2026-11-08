@@ -29,7 +29,10 @@ export const FACTORY: Partial<Record<NetworkId, string>> = {
   ...(import.meta.env.VITE_FACTORY_MAINNET ? { mainnet: import.meta.env.VITE_FACTORY_MAINNET as string } : {}),
 };
 /** Networks this build offers. */
-export const NETWORK_IDS: NetworkId[] = HOSTED ? ['testnet', 'mainnet'] : ['sandbox', 'testnet', 'mainnet'];
+// The public site offers mainnet only once a mainnet factory is configured.
+export const NETWORK_IDS: NetworkId[] = HOSTED
+  ? ['testnet', ...(FACTORY.mainnet ? (['mainnet'] as NetworkId[]) : [])]
+  : ['sandbox', 'testnet', 'mainnet'];
 
 // ------------------------------------------------------------------ types
 

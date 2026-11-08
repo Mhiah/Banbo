@@ -31,7 +31,8 @@ export default function CreateVault() {
         setAccount(acc.find((a) => a.active)?.accountId ?? acc[0]?.accountId ?? null);
       };
       pick();
-      unsub = w.selector.store.observable.subscribe(pick).unsubscribe;
+      const sub = w.selector.store.observable.subscribe(pick);
+      unsub = () => sub.unsubscribe();
     }).catch((e) => setErr(`Wallet: ${prettyError(e)}`));
     view<FactoryInfo>(NETWORKS[b.network].nodeUrl, factory, 'get_info').then(setInfo).catch((e) => setErr(`Couldn’t read the factory ${factory}: ${prettyError(e)}`));
     return () => unsub?.();

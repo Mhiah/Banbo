@@ -191,4 +191,4 @@ in `contract/res/banbo.wasm.sha256`. NEAR's code hash is base58 of that sha256.
 - The owner is fully trusted, and so is whoever holds the vault account's
   full-access key (until it is deleted).
 - Token contracts are trusted once added.
-- Not externally audited. The mainnet deployment holds a small balance and says so.
+- Not externally audited, and deployed on testnet only. Don't put real funds in it.
