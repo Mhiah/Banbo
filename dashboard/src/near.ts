@@ -8,13 +8,13 @@ export type NetworkId = 'sandbox' | 'testnet' | 'mainnet';
 
 export const NETWORKS: Record<NetworkId, { label: string; nodeUrl: string; explorer?: string }> = {
   sandbox: { label: 'Local sandbox', nodeUrl: '' },
-  testnet: { label: 'Testnet', nodeUrl: 'https://archival-rpc.testnet.fastnear.com', explorer: 'https://testnet.nearblocks.io' },
+  testnet: { label: 'Testnet', nodeUrl: 'https://test.rpc.fastnear.com', explorer: 'https://testnet.nearblocks.io' },
   mainnet: { label: 'Mainnet', nodeUrl: 'https://rpc.mainnet.fastnear.com', explorer: 'https://nearblocks.io' },
 };
 
 /** Other public RPC nodes to try, in order, when a network's node can't be reached. */
 const FALLBACKS: Record<string, string[]> = {
-  [NETWORKS.testnet.nodeUrl]: ['https://test.rpc.fastnear.com', 'https://rpc.testnet.near.org'],
+  [NETWORKS.testnet.nodeUrl]: ['https://rpc.testnet.fastnear.com', 'https://rpc.testnet.near.org'],
   [NETWORKS.mainnet.nodeUrl]: ['https://free.rpc.fastnear.com', 'https://rpc.mainnet.near.org'],
 };
 /** The node that last answered, per network, so we don't retry a dead one on every read. */
