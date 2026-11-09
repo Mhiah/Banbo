@@ -140,10 +140,32 @@ function VaultGate({ children }: { children: React.ReactNode }) {
   }
   if (b.network !== 'sandbox' && !b.contractId && !b.writer?.accountId) {
     return (
-      <Empty title="Connect your wallet" action={<div className="empty-actions">
-        {b.handle && <button className="btn primary" onClick={() => b.handle!.modal.show()}>Connect wallet</button>}
-        <a className="btn" href="#/guide">Read the guide</a>
-      </div>} />
+      <section className="welcome" aria-labelledby="welcome-title">
+        <h1 id="welcome-title">Banbo: the security layer for AI agent wallets</h1>
+        <p className="welcome-sub">CaMeL’s defence against prompt injection, enforced on-chain.</p>
+        <ol className="welcome-steps">
+          <li>
+            <span className="welcome-num" aria-hidden="true">1</span>
+            <span className="welcome-step-title">Your agent asks to pay</span>
+            <span className="welcome-step-body">An AI agent proposes a payment from your vault.</span>
+          </li>
+          <li>
+            <span className="welcome-num" aria-hidden="true">2</span>
+            <span className="welcome-step-title">Banbo checks who said so</span>
+            <span className="welcome-step-body">Did the recipient and amount come from you, or from a document the agent read?</span>
+          </li>
+          <li>
+            <span className="welcome-num" aria-hidden="true">3</span>
+            <span className="welcome-step-title">The contract decides</span>
+            <span className="welcome-step-body">The NEAR contract pays, holds it for you, or refuses.</span>
+          </li>
+        </ol>
+        <div className="empty-actions">
+          {b.handle && <button className="btn primary" onClick={() => b.handle!.modal.show()}>Connect wallet</button>}
+          <a className="btn" href="#/guide">Read the guide</a>
+        </div>
+        <p className="welcome-foot">Built on Google DeepMind’s CaMeL research (<a href="https://arxiv.org/abs/2503.18813" target="_blank" rel="noreferrer">arXiv 2503.18813</a>) · NEAR testnet</p>
+      </section>
     );
   }
   if (b.network !== 'sandbox' && !b.contractId) {
