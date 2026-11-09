@@ -76,4 +76,4 @@ else
 fi
 
 near contract call-function as-read-only "$FACTORY" get_info json-args '{}' "${NET[@]}" now
-echo "Done. Create a vault at https://mhiah.github.io/Banbo/ ($NETWORK)"
+echo "Done. Create a vault at https://banbo.myacxt.site/ ($NETWORK)"

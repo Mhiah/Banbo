@@ -1,6 +1,6 @@
 # Live testnet runs
 
-Real transactions on NEAR testnet, made on 3 November 2026 by Claude (in Claude Code) paying through the [Banbo MCP server](../mcp/README.md). The agent holds only a function-call key for `request_payment`. Every decision below was made by the vault contract `vault.banbo-mia.testnet`, and each one can be checked on the explorer or on the [live dashboard](https://mhiah.github.io/Banbo/#/activity?vault=vault.banbo-mia.testnet).
+Real transactions on NEAR testnet, made on 3 November 2026 by Claude (in Claude Code) paying through the [Banbo MCP server](../mcp/README.md). The agent holds only a function-call key for `request_payment`. Every decision below was made by the vault contract `vault.banbo-mia.testnet`, and each one can be checked on the explorer or on the [live dashboard](https://banbo.myacxt.site/#/activity?vault=vault.banbo-mia.testnet).
 
 | Account | Role |
 |---|---|
@@ -26,4 +26,4 @@ How these were checked, honestly:
 
 ## A vault created from the website
 
-On 3 November 2026 a new testnet account, `banbo-user-mia.testnet`, connected a wallet on the [live dashboard](https://mhiah.github.io/Banbo/) and clicked **Create a vault** with the name "Nectar Beauty". One wallet-signed transaction to the factory `banbo-vaults.testnet` created `nectarbeauty.banbo-vaults.testnet`, funded it with 9 NEAR, deployed the factory's copy of the Banbo contract and set the caller as its owner: [3TX94gaU…hDJWUS](https://testnet.nearblocks.io/txns/3TX94gaU5PwBPTXr6QRqBXYJbuHeAeYjWSBgw6hDJWUS). No command line was used.
+On 3 November 2026 a new testnet account, `banbo-user-mia.testnet`, connected a wallet on the [live dashboard](https://banbo.myacxt.site/) and clicked **Create a vault** with the name "Nectar Beauty". One wallet-signed transaction to the factory `banbo-vaults.testnet` created `nectarbeauty.banbo-vaults.testnet`, funded it with 9 NEAR, deployed the factory's copy of the Banbo contract and set the caller as its owner: [3TX94gaU…hDJWUS](https://testnet.nearblocks.io/txns/3TX94gaU5PwBPTXr6QRqBXYJbuHeAeYjWSBgw6hDJWUS). No command line was used.

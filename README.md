@@ -8,7 +8,7 @@ Other agent wallets check *how much* and *to whom*. Banbo also checks **who said
 
 Built at NEAR HACKATHON (Nov 2026). Tracks: **AI Security & Defense**, Privacy & Private AI, Agent Economy, Open Innovation.
 
-**See it live, no wallet needed:** [the testnet vault's Activity page](https://mhiah.github.io/Banbo/#/activity?vault=vault.banbo-mia.testnet) shows real payments Claude asked for: paid, held for the owner, and refused on-chain, each with the rule that decided it ([transactions](docs/TESTNET_PROOF.md)).
+**See it live, no wallet needed:** [the testnet vault's Activity page](https://banbo.myacxt.site/#/activity?vault=vault.banbo-mia.testnet) shows real payments Claude asked for: paid, held for the owner, and refused on-chain, each with the rule that decided it ([transactions](docs/TESTNET_PROOF.md)).
 
 **Judging?** [JUDGES.md](JUDGES.md) is the shortest path: the live vault, the attack in two commands, and how to check each claim.
 
@@ -150,12 +150,12 @@ Act 1 of the demo runs the Acme scenario as real transactions on a local NEAR no
 
 | Do this | See this |
 |---|---|
-| Open [the testnet vault's Activity page](https://mhiah.github.io/Banbo/#/activity?vault=vault.banbo-mia.testnet) (no wallet) | Real payments Claude asked for, marked **Paid** or **Blocked**. The email redirect is Blocked with "Recipient came from a document, not from you". |
+| Open [the testnet vault's Activity page](https://banbo.myacxt.site/#/activity?vault=vault.banbo-mia.testnet) (no wallet) | Real payments Claude asked for, marked **Paid** or **Blocked**. The email redirect is Blocked with "Recipient came from a document, not from you". |
 | Click any row | The rule that decided it, the request id and a NearBlocks link to the transaction |
 | Run `make setup` then `make demo` | Act 1 prints **PAID** for the real 0.30 invoice, **HELD FOR OWNER** for the forged 0.45, and **REFUSED recipient_from_untrusted_source** when the agent tries to pay Globex |
 | Run `make sandbox` and `make dashboard`, open **Demo**, click **Run** on "Invoice fraud (origin checks)" | The same three outcomes appear on Activity, and the held payment waits under **Needs your approval** on Overview |
 
-**Live on NEAR testnet:** the dashboard is at **[mhiah.github.io/Banbo](https://mhiah.github.io/Banbo/)**: connect a testnet wallet to create or open your vault. To look at the demo vault without a wallet, open **[this link](https://mhiah.github.io/Banbo/#/overview?vault=vault.banbo-mia.testnet)**; it reads everything from the chain, and only the owner's wallet can change anything.
+**Live on NEAR testnet:** the dashboard is at **[banbo.myacxt.site](https://banbo.myacxt.site/)**: connect a testnet wallet to create or open your vault. To look at the demo vault without a wallet, open **[this link](https://banbo.myacxt.site/#/overview?vault=vault.banbo-mia.testnet)**; it reads everything from the chain, and only the owner's wallet can change anything.
 
 **Live runs with Claude:** a normal payment, a refused attacker payment, an emailed invoice held for the owner, and an email redirect refused on-chain, with explorer links: [docs/TESTNET_PROOF.md](docs/TESTNET_PROOF.md). The CaMeL runtime itself, with live Claude as planner and reader: [docs/LIVE_CLAUDE_RUN.md](docs/LIVE_CLAUDE_RUN.md).
 
