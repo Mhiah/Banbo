@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useBanbo } from '../state';
 import { FACTORY, NETWORKS, createVault, view, wallet, prettyError, type FactoryInfo, type WalletHandle } from '../near';
 import { Panel, PageHeader, Empty } from '../ui';
@@ -11,6 +11,8 @@ const toAccountName = (v: string) => v.trim().replace(/\s+/g, ' ').toLowerCase()
 const DAY_MS = 86_400_000;
 
 /** Create a vault from the browser: one wallet-signed transaction to the factory. */
+const VISITOR = 'banbo.new.visitor';
+
 export default function CreateVault() {
   const b = useBanbo();
   const factory = FACTORY[b.network];
@@ -20,6 +22,9 @@ export default function CreateVault() {
   const [f, setF] = useState({ name: '', deposit: '9', cap: '1' });
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const ready = useRef(false);
+  const seen = useRef<string | null>(null);
+  const connectedHere = useRef<string | null>(null);
 
   useEffect(() => {
     if (!factory) return;
@@ -28,15 +33,39 @@ export default function CreateVault() {
       setH(w);
       const pick = () => {
         const acc = w.selector.store.getState().accounts;
-        setAccount(acc.find((a) => a.active)?.accountId ?? acc[0]?.accountId ?? null);
+        const id = acc.find((a) => a.active)?.accountId ?? acc[0]?.accountId ?? null;
+        // Connected on this page, just now (not already signed in when it opened).
+        // The session flag covers wallets that leave the site to sign in and come back.
+        let wasVisitor = false;
+        try {
+          wasVisitor = sessionStorage.getItem(VISITOR) === '1';
+          if (id) sessionStorage.removeItem(VISITOR); else sessionStorage.setItem(VISITOR, '1');
+        } catch { /* storage blocked */ }
+        if (id && id !== seen.current && (ready.current || wasVisitor)) connectedHere.current = id;
+        seen.current = id;
+        setAccount(id);
       };
       pick();
+      ready.current = true;
       const sub = w.selector.store.observable.subscribe(pick);
       unsub = () => sub.unsubscribe();
     }).catch((e) => setErr(`Wallet: ${prettyError(e)}`));
     view<FactoryInfo>(NETWORKS[b.network].nodeUrl, factory, 'get_info').then(setInfo).catch((e) => setErr(`Couldn’t read the factory ${factory}: ${prettyError(e)}`));
-    return () => unsub?.();
+    return () => {
+      unsub?.();
+      // Leaving for another page inside the app is not a sign-in round trip.
+      try { sessionStorage.removeItem(VISITOR); } catch { /* storage blocked */ }
+    };
   }, [b.network, factory]);
+
+  // Someone who connects here and already owns a vault is taken to it, not left
+  // on this form. An owner who opened this page on purpose can still make another.
+  const ownsShown = !!account && connectedHere.current === account && b.state?.config.owner === account;
+  useEffect(() => {
+    if (!ownsShown) return;
+    connectedHere.current = null;
+    window.location.hash = '#/overview';
+  }, [ownsShown]);
 
   if (!factory) {
     return (
