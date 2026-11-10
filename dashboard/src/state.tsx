@@ -236,6 +236,10 @@ function useBanboState() {
     try { await run; } finally { if (reading.current === run) reading.current = null; }
   }, [nodeUrl, contractId, network]);
 
+  // Another vault (typed in Settings, or opened from a link) must never be shown
+  // with the previous vault's figures, even for a moment or when it fails to load.
+  useEffect(() => { setState(null); setLoadError(null); }, [nodeUrl, contractId]);
+
   useEffect(() => {
     failures.current = 0;
     loaded.current = false;

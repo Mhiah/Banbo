@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useBanbo } from '../state';
 import { short, until, duration, ago } from '../format';
 import { Panel, PageHeader, Dialog, ChangeSummary, Empty } from '../ui';
@@ -173,6 +173,14 @@ function HiddenPanel({ keyMatches, onReview }: { keyMatches: boolean; onReview: 
 
   const config = Object.fromEntries(Object.values(labels).filter((l): l is HiddenLabel => !!l).map((l) => [l.account, l.salt]));
   const copy = (text: string) => navigator.clipboard?.writeText(text).then(() => b.toast('ok', 'Copied'), () => b.toast('err', 'Couldn’t copy'));
+
+  // The "give your agent this entry" note goes away once that vendor is removed.
+  const addedSeen = useRef(false);
+  useEffect(() => {
+    if (!added) { addedSeen.current = false; return; }
+    if (config[added.account] === added.salt) addedSeen.current = true;
+    else if (addedSeen.current) setAdded(null);
+  }, [added, labels]);
 
   return (
     <Panel title="Hidden vendors" action={b.keys && Object.keys(config).length > 0 && (

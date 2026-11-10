@@ -4,7 +4,7 @@ import { NEAR_ASSET, assetOf, type Asset } from '../near';
 import { near, units, toUnits, short, duration, until } from '../format';
 import { Panel, PageHeader, Addr, Amount, Dialog, ChangeSummary, Empty } from '../ui';
 
-type Pending = { title: string; rows: [string, ReactNode, ReactNode][]; note?: ReactNode; label: string; method: string; args: object; danger?: boolean };
+type Pending = { title: string; rows: [string, ReactNode, ReactNode][]; note?: ReactNode; label: string; method: string; args: object; danger?: boolean; next?: Pending };
 
 export default function Rules() {
   const b = useBanbo();
@@ -32,7 +32,7 @@ export default function Rules() {
     if (!pending) return;
     if (await b.act(pending.label, pending.method, pending.args)) {
       if (pending.method === 'allow_recipient') setNewRecipient('');
-      setPending(null);
+      setPending(pending.next ?? null);
     }
   };
 
@@ -352,19 +352,23 @@ function RetentionDialog({ onClose, onReview }: { onClose: () => void; onReview:
         if (!Number.isInteger(n) || n < 100 || n > 10_000) return setErr('Records kept must be a whole number from 100 to 10,000.');
         const ms = Math.round(h * 3_600_000);
         if (ms === c.approval_ttl_ms && n === c.history_limit) return onClose();
-        // Two settings, two methods: review whichever changed (the TTL first).
+        // Two settings, two methods: when both changed, the second review opens
+        // once the first is confirmed.
+        const records: Pending = {
+          title: 'Review change', label: 'Records setting updated', method: 'set_history_limit', args: { history_limit: n },
+          rows: [['Payment records kept', c.history_limit.toLocaleString(), n.toLocaleString()]],
+          note: n < c.history_limit ? 'Older records are deleted a few at a time as new payments come in.' : undefined,
+        };
         if (ms !== c.approval_ttl_ms) {
+          const both = n !== c.history_limit;
           onReview({
-            title: 'Review change', label: 'Approval window updated', method: 'set_approval_ttl', args: { approval_ttl_ms: ms },
+            title: both ? 'Review change (1 of 2)' : 'Review change', label: 'Approval window updated', method: 'set_approval_ttl', args: { approval_ttl_ms: ms },
             rows: [['Approval window', duration(c.approval_ttl_ms), duration(ms)]],
-            note: n !== c.history_limit ? 'Change the records setting again after this one.' : 'Payments already waiting keep the deadline they were given.',
+            note: both ? 'Two settings changed, so there are two signatures. The records setting comes next.' : 'Payments already waiting keep the deadline they were given.',
+            next: both ? { ...records, title: 'Review change (2 of 2)' } : undefined,
           });
         } else {
-          onReview({
-            title: 'Review change', label: 'Records setting updated', method: 'set_history_limit', args: { history_limit: n },
-            rows: [['Payment records kept', c.history_limit.toLocaleString(), n.toLocaleString()]],
-            note: n < c.history_limit ? 'Older records are deleted a few at a time as new payments come in.' : undefined,
-          });
+          onReview(records);
         }
       }}>
         <div className="form-row">

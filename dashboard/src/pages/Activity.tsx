@@ -112,7 +112,7 @@ export default function Activity() {
     const t = q.trim().toLowerCase();
     return [i.agent, i.recipient, memoText(i), i.requestId, i.reason ?? '', i.asset.symbol].some((f) => f.toLowerCase().includes(t));
   });
-  const count = (k: Kind) => all.filter((i) => i.kind === k).length;
+  const count = (k: 'open' | Kind) => all.filter((i) => (k === 'open' ? i.kind === 'InFlight' || i.kind === 'PendingApproval' : i.kind === k)).length;
 
   return (
     <>
@@ -122,7 +122,7 @@ export default function Activity() {
           {FILTERS.map((f) => (
             <button key={f.key} role="tab" aria-selected={filter === f.key} className={filter === f.key ? 'on' : ''} onClick={() => setFilter(f.key)}>
               {f.label}
-              {f.key !== 'all' && f.key !== 'open' && count(f.key as Kind) > 0 && <span className="fcount">{count(f.key as Kind)}</span>}
+              {f.key !== 'all' && count(f.key) > 0 && <span className="fcount">{count(f.key)}</span>}
             </button>
           ))}
         </div>
