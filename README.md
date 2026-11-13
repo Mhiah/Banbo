@@ -345,7 +345,7 @@ NEAR amounts are yoctoNEAR strings; token amounts are in the token's smallest un
 ## Tests
 
 ```bash
-make test-contract   # 131 vault + 7 factory Rust unit tests (policy, invariants, callbacks, tokens, risk rules, private mode,
+make test-contract   # 135 vault + 7 factory Rust unit tests (policy, invariants, callbacks, tokens, risk rules, private mode,
                      #   TEE checks incl. a genuine Intel TDX quote, expiry, recovery, owner controls, history,
                      #   task mandates and origin checks: labels, holds, refusals, vouching; who may initialize a vault)
 make test-sandbox    # 49 integration tests on a local NEAR node: payments, USDC, the paid API, risk rules,
@@ -442,7 +442,7 @@ OWNER=you.testnet FACTORY=banbo-vaults.testnet ./scripts/deploy-factory-testnet.
 
 - Private mode hides the vendor list and memos, not payments: amounts and recipients of payments that are made are public. See [docs/PRIVACY.md](docs/PRIVACY.md).
 - TEE agents trust Intel TDX and dstack's key service for privacy (never for the spending limits). The full attestation flow has been tested on-chain with a genuine Intel quote, but not yet with an agent deployed in a live TDX VM.
-- Outside a task mandate, the allowlist is the main defence against new recipients and doesn't judge whether a payment to an approved vendor is sensible beyond the limits. Under a mandate, the origin check adds that judgment for recipients and amounts.
+- Outside a task mandate, the allowlist is the main defence against new recipients and doesn't judge whether a payment to an approved vendor is sensible beyond the limits. Under a mandate, the origin check adds that judgment for recipients and amounts. The origin check binds every payment only once the owner turns it on (`set_origin_policy(true)`, the switch on the Mandates page); until then an agent can still pay an allowlisted account without labels, within its ordinary limits.
 - Origin labels are as trustworthy as the TEE and the runtime code, or, for an owner-vouched agent, the owner's own server. The sandbox demo uses vouching because it can't produce a live TDX quote. DKIM proves which domain sent an email, not that the domain is honest.
 - The origin runtime (`tee-agent/`) has run end to end with live Claude as planner and reader on a local NEAR node ([docs/LIVE_CLAUDE_RUN.md](docs/LIVE_CLAUDE_RUN.md)), and with scripted models, including a reader fully fooled by the forgery. Claude itself has paid through the MCP server on testnet, with the vault holding and refusing payments as designed ([docs/TESTNET_PROOF.md](docs/TESTNET_PROOF.md)).
 - Recovering a stuck payment relies on the owner reading the explorer correctly (`reconcile_stuck`).

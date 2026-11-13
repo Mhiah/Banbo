@@ -490,3 +490,72 @@ fn only_the_vault_or_the_account_that_created_it_can_initialize() {
     assert!(!init_as("acme.banbo-factory.testnet", "evilbanbo-factory.testnet") , "a look-alike name");
     assert!(!init_as("acme.banbo-factory.testnet", "factory.testnet"), "a name that is only a suffix");
 }
+
+// ------------------------------------------------------------------ audit
+
+/// One agent can park the whole open set in pending approvals and so stop
+/// every other agent, until the owner declines them or they expire. The
+/// owner's way out works: switch the agent off, decline, and others pay again.
+#[test]
+fn audit_one_agent_can_fill_the_open_set_and_the_owner_can_clear_it() {
+    let mut c = setup();
+    let other = acct("other.testnet");
+    ctx(owner(), T0);
+    c.add_agent(agent(), U128(NEAR), U128(10 * NEAR), U128(0));
+    c.add_agent(other.clone(), U128(NEAR), U128(10 * NEAR), U128(NEAR));
+    for i in 0..MAX_OPEN {
+        assert!(matches!(pay(&mut c, &format!("park{i}"), 1, T0), RequestOutcome::PendingApproval { .. }));
+    }
+    ctx(other.clone(), T0 + 1);
+    assert_eq!(
+        c.request_payment("mine".into(), vendor(), U128(1), None, None, None, None),
+        RequestOutcome::Rejected { reason: "too_many_open_payments".into() }
+    );
+    ctx(owner(), T0 + 2);
+    c.set_agent_active(agent(), false);
+    c.decline(key("park0"));
+    ctx(other, T0 + 3);
+    assert!(matches!(
+        c.request_payment("mine".into(), vendor(), U128(1), None, None, None, None),
+        RequestOutcome::Dispatched { .. }
+    ));
+    assert_eq!(pay(&mut c, "again", 1, T0 + 4), RequestOutcome::Rejected { reason: "agent_disabled".into() });
+}
+
+/// Amounts near the top of u128 are refused by the limits; nothing wraps.
+#[test]
+fn audit_absurd_amounts_are_refused_not_wrapped() {
+    let mut c = setup();
+    for (i, amount) in [u128::MAX, u128::MAX - 1, u128::MAX / 2 + 1].into_iter().enumerate() {
+        assert_eq!(
+            pay(&mut c, &format!("huge{i}"), amount, T0),
+            RequestOutcome::Rejected { reason: "exceeds_per_request_max".into() }
+        );
+    }
+    assert_eq!(c.get_agent(agent()).unwrap().reserved.0, 0);
+    assert_eq!(c.get_balances().shared_reserved.0, 0);
+}
+
+/// The budget invariant across a failed and a successful payment and a
+/// declined approval: nothing stays reserved and only the paid amount is spent.
+#[test]
+fn audit_reservations_return_to_zero_on_every_exit() {
+    let mut c = setup();
+    assert!(matches!(pay(&mut c, "ok", NEAR / 4, T0), RequestOutcome::Dispatched { .. }));
+    assert!(matches!(pay(&mut c, "fails", NEAR / 4, T0), RequestOutcome::Dispatched { .. }));
+    assert!(matches!(pay(&mut c, "held", NEAR, T0), RequestOutcome::PendingApproval { .. }));
+    callback(true, T0 + 1);
+    assert!(c.on_payout(key("ok")));
+    callback(false, T0 + 1);
+    assert!(!c.on_payout(key("fails")));
+    ctx(owner(), T0 + 2);
+    c.decline(key("held"));
+    let a = c.get_agent(agent()).unwrap();
+    let b = c.get_balances();
+    assert_eq!((a.spent.0, a.reserved.0), (NEAR / 4, 0));
+    assert_eq!((b.shared_spent.0, b.shared_reserved.0, b.pending_approval.0, b.in_flight.0), (NEAR / 4, 0, 0, 0));
+    assert_eq!(c.get_config().open_payments, 0);
+    // A second result for a finished payment is refused.
+    callback(true, T0 + 3);
+    assert!(panics(|| c.on_payout(key("fails"))).contains("already reconciled"));
+}

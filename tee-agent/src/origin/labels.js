@@ -9,11 +9,23 @@ export const OWNER = Object.freeze({ kind: 'owner' });
 
 export const sha256 = (data) => crypto.createHash('sha256').update(data).digest('hex');
 
-/** A label for a value taken from untrusted content. */
-export function fromSource(source, content) {
+/**
+ * A label for a value taken from untrusted content. `identity` (optional)
+ * names the document across copies of it; it never goes on-chain.
+ */
+export function fromSource(source, content, identity = null) {
   if (!/^(email|web|doc|api):[!-~]{1,94}$/.test(source)) throw new Error(`bad source ${source}`);
-  return Object.freeze({ kind: 'source', source, digest: sha256(content) });
+  const digest = sha256(content);
+  return Object.freeze({ kind: 'source', source, digest, identity: identity ?? digest });
 }
+
+/**
+ * The request id for a payment whose amount came from a document. It is the
+ * same every time the same document is paid under the same task to the same
+ * recipient, so the vault's exactly-once rule covers replays of an invoice.
+ */
+export const documentPaymentId = (prefix, taskId, origin, recipient) =>
+  `${prefix}-${sha256(`${taskId}|${origin.identity ?? origin.digest}|${recipient}`).slice(0, 40)}`;
 
 /** A value and its label. Values are never unwrapped without their label. */
 export class Labeled {

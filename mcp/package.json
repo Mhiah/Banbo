@@ -4,16 +4,20 @@
   "private": true,
   "description": "MCP server that lets any AI agent pay through a Banbo vault, with the vault contract enforcing the owner's rules",
   "type": "module",
-  "bin": { "banbo-mcp": "src/index.js" },
+  "bin": {
+    "banbo-mcp": "src/index.js"
+  },
   "scripts": {
     "start": "node src/index.js",
     "test": "node --test test/*.test.js"
   },
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
     "near-api-js": "5.1.1",
-    "zod": "4.6.5"
+    "zod": "4.6.7"
   }
 }

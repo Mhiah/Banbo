@@ -570,3 +570,24 @@ fn origin_json_shape_is_stable() {
     let back: PaymentOrigin = near_sdk::serde_json::from_str(&j).unwrap();
     assert_eq!(back, o);
 }
+
+// ------------------------------------------------------------------ audit
+
+/// The origin rule only binds once the owner turns `require_origin` on.
+/// Until then an agent can leave the labels out and pay any allowlisted
+/// account (here Globex, which is not a payee of the task) within its
+/// ordinary limits. Recorded so the documentation and the default stay honest.
+#[test]
+fn audit_origin_checks_are_opt_in_until_require_origin_is_on() {
+    let (mut c, _) = setup();
+    assert!(!c.get_config().require_origin);
+    assert!(matches!(pay(&mut c, agent(), "plain", globex(), NEAR / 2, None, T0 + 1), RequestOutcome::Dispatched { .. }));
+    assert_eq!(task(&c).reserved.0, 0);
+    ctx(owner(), T0 + 2);
+    c.set_origin_policy(true);
+    assert_eq!(pay(&mut c, agent(), "plain-2", globex(), NEAR / 2, None, T0 + 3), rejected("origin_required"));
+    assert_eq!(
+        pay(&mut c, agent(), "labelled", globex(), NEAR / 2, Some(owner_origin("acme-oct")), T0 + 3),
+        rejected("recipient_not_in_task")
+    );
+}

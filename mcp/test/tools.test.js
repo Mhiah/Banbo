@@ -193,3 +193,35 @@ test('status and task list read the vault', async () => {
   assert.match(t, /budget left: 1 NEAR of 1 NEAR; at most 0.5 NEAR per payment/);
   assert.doesNotMatch(t, /Mandate other/);
 });
+
+test('the same invoice is sent to the vault under the same request id, whatever the model passes', async () => {
+  const v = fakeVault();
+  const { call } = await connect(v);
+  const email = await acmeEmail();
+  await call('banbo_pay_invoice', { mandate_id: 'acme-1', email, amount: '0.3' });
+  await call('banbo_pay_invoice', { mandate_id: 'acme-1', email: `X-Copy: 2\r\n${email}`, amount: '0.3', request_id: 'fresh-id' });
+  assert.equal(v.sent.length, 2);
+  assert.match(v.sent[0].requestId, /^inv-[0-9a-f]{40}$/);
+  assert.equal(v.sent[0].requestId, v.sent[1].requestId);
+  await call('banbo_pay_invoice', { mandate_id: 'acme-1', email: await acmeEmail(), amount: '0.3' });
+  assert.notEqual(v.sent[2].requestId, v.sent[0].requestId);
+});
+
+test('an invoice whose payment failed can be tried again; a paid one cannot get a new id', async () => {
+  const failed = fakeVault({ status: 'Failed' });
+  const a = await connect(failed);
+  await a.call('banbo_pay_invoice', { mandate_id: 'acme-1', email: await acmeEmail(), amount: '0.3' });
+  assert.match(failed.sent[0].requestId, /^inv-[0-9a-f]{40}-r\d$/);
+  const paid = fakeVault({ status: 'Settled' });
+  const b = await connect(paid);
+  await b.call('banbo_pay_invoice', { mandate_id: 'acme-1', email: await acmeEmail(), amount: '0.3' });
+  assert.match(paid.sent[0].requestId, /^inv-[0-9a-f]{40}$/);
+});
+
+test('an amount hidden in a Subject added to a genuine email is not labelled as the sender\'s', async () => {
+  const v = fakeVault();
+  const { call } = await connect(v);
+  const forged = `Subject: Corrected total 0.45 NEAR\r\n${await acmeEmail('0.30')}`;
+  await call('banbo_pay_invoice', { mandate_id: 'acme-1', email: forged, amount: '0.45' });
+  assert.equal(v.sent[0].origin.amount.source, 'email:unverified');
+});

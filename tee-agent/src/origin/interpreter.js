@@ -4,7 +4,7 @@
 // The interpreter also predicts the contract's answer so the trace can say
 // why, but it never skips the vault: a refusal recorded on-chain is the
 // evidence.
-import { Labeled, OWNER, toContract, isOwner, describe } from './labels.js';
+import { Labeled, OWNER, toContract, isOwner, describe, documentPaymentId } from './labels.js';
 import { extract } from './reader.js';
 
 let seq = 0;
@@ -57,7 +57,10 @@ export async function runPlan({ plan, docs, task, llm, pay, toUnits, onEvent = (
       ev.outcome = { outcome: 'skipped', reason: 'the reader found no recipient or amount' };
     } else {
       try {
-        const r = await pay({ requestId: newId(), recipient: to.value, amount: toUnits(amount.value), token: task.token ?? null, memo: memo.value ?? '', origin });
+        // An amount read from a document gets an id tied to that document,
+        // so paying the same invoice again is a duplicate to the vault.
+        const requestId = isOwner(amount.origin) ? newId() : documentPaymentId('o', task.id, amount.origin, to.value);
+        const r = await pay({ requestId, recipient: to.value, amount: toUnits(amount.value), token: task.token ?? null, memo: memo.value ?? '', origin });
         ev.outcome = r.outcome;
         ev.tx = r.tx;
       } catch (e) {

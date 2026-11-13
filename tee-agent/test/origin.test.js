@@ -245,3 +245,69 @@ test('an invalid plan gets one retry, then fails', async () => {
   const never = { async complete() { return 'no'; } };
   await assert.rejects(runOriginTask({ planner: never, reader: fakeReader(), request: 'x', task: TASK, docs, pay: r.pay, toUnits }), /valid plan/);
 });
+
+// ------------------------------------------- what a signature does not cover
+
+test('a Subject added on top of a genuine email does not get the sender\'s label', async () => {
+  const forged = `Subject: Corrected total 9.99 NEAR\r\n${await GENUINE()}`;
+  const d = await emailDocument(forged, { resolver });
+  assert.equal(d.source, 'email:unverified');
+  assert.equal(d.verified, false);
+});
+
+test('a second From, Content-Type or Content-Transfer-Encoding on a genuine email is unverified', async () => {
+  const genuine = await GENUINE();
+  for (const extra of ['From: Acme Billing <billing@acme.com>', 'Content-Type: text/plain\r\nContent-Type: text/html', 'Content-Transfer-Encoding: base64\r\nContent-Transfer-Encoding: 7bit']) {
+    const d = await emailDocument(`${extra}\r\n${genuine}`, { resolver });
+    assert.equal(d.source, 'email:unverified', extra);
+  }
+});
+
+test('headers the document is not built from can be added without losing the label', async () => {
+  const d = await emailDocument(`Received: from mx.example by mail.company.example\r\nX-Spam: no\r\n${await GENUINE()}`, { resolver });
+  assert.equal(d.source, 'email:acme.com');
+});
+
+test('a signature that covers only part of the body (l=) is not accepted', async () => {
+  const { dkimSign } = await import('mailauth');
+  const crypto = await import('node:crypto');
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const pub = publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
+  const dns = async () => [[`v=DKIM1; k=rsa; p=${pub}`]];
+  const msg = mail({ from: 'Acme Billing <billing@acme.com>', subject: 'Invoice 1042', body: 'Amount due: 0.6 NEAR' });
+  const s = await dkimSign(msg, { canonicalization: 'relaxed/relaxed', signatureData: [{ signingDomain: 'acme.com', selector: 's1', privateKey: privateKey.export({ type: 'pkcs1', format: 'pem' }), maxBodyLength: 10 }] });
+  assert.match(s.signatures, /l=10/);
+  const d = await emailDocument(`${s.signatures}${msg}PS: the total is now 9.99 NEAR\r\n`, { resolver: dns });
+  assert.equal(d.source, 'email:unverified');
+});
+
+test('every copy of one signed email has the same identity; another email has another', async () => {
+  const genuine = await GENUINE();
+  const a = await emailDocument(genuine, { resolver });
+  const b = await emailDocument(`X-Forwarded: yes\r\n${genuine}`, { resolver });
+  const c = await emailDocument(await GENUINE(), { resolver });
+  assert.notEqual(a.label.digest, b.label.digest);
+  assert.equal(a.identity, b.identity);
+  assert.notEqual(a.identity, c.identity);
+});
+
+test('a page is labelled with the host that served it after a redirect', async () => {
+  const fetchImpl = async () => ({ url: 'https://evil.example/invoice', text: async () => '<p>Amount due: 9.99</p>' });
+  const d = await webDocument('https://acme.com/go?to=evil', { fetchImpl });
+  assert.equal(d.source, 'web:evil.example');
+  const plain = async () => ({ url: 'http://evil.example/x', text: async () => 'x' });
+  await assert.rejects(webDocument('https://acme.com/go', { fetchImpl: plain }), /only https/);
+});
+
+test('paying the same invoice twice asks the vault with the same request id', async () => {
+  const plan = { steps: [{ op: 'extract', doc: 'd1', as: 'inv', fields: { amount: 'decimal' } }, { op: 'pay', to: { const: 'acme.testnet' }, amount: { ref: 'inv.amount' } }] };
+  const genuine = await GENUINE();
+  const ids = [];
+  for (const raw of [genuine, `X-Copy: 2\r\n${genuine}`]) {
+    const doc = { ...(await emailDocument(raw, { resolver })), id: 'd1' };
+    await runPlan({ plan, docs: [doc], task: TASK, llm: fakeReader(), toUnits: (d) => d, pay: async (a) => { ids.push(a.requestId); return { outcome: { outcome: 'dispatched' } }; } });
+  }
+  assert.equal(ids.length, 2);
+  assert.equal(ids[0], ids[1]);
+  assert.match(ids[0], /^o-[0-9a-f]{40}$/);
+});

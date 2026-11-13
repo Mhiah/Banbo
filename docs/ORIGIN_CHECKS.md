@@ -55,8 +55,8 @@ Refusals go to the bounded blocked log with their labels. With `set_origin_polic
 
 The runtime labels each document before the reader sees it:
 
-- **email:<domain>**: the message has a DKIM signature that verifies, and its signing domain matches the From address. Anything else is `email:unverified`, and the contract won't let an owner trust that.
-- **web:<host>**: an https page; TLS vouches for the host.
+- **email:<domain>**: the message has a DKIM signature that verifies, and its signing domain matches the From address. Anything else is `email:unverified`, and the contract won't let an owner trust that. Only what the signature covers counts: a message with a From, Subject or MIME header the signature doesn't cover (one added on top of a genuine message), or a signature that covers only part of the body (`l=`), is `email:unverified` too. A payment whose amount came from an email gets a request id derived from that email's signature, so the same invoice is paid at most once per mandate and recipient, however often it is forwarded.
+- **web:<host>**: an https page; TLS vouches for the host. After a redirect, the host is the one that served the page.
 - **doc:<name>**: a file handed to the agent.
 
 ## The runtime
@@ -74,6 +74,8 @@ The TEE agent exposes it as `POST /origin-task` with `{task_id, request, emails,
 ## Limits
 
 - The labels are as trustworthy as the TEE and the runtime code. The on-chain quote check, the approved measurement and the reproducible builds make that checkable. Owner-vouched labels are weaker and are recorded as such.
+- The rule binds every payment only when the owner turns on `set_origin_policy(true)`. Until then an agent can still pay an allowlisted account without labels, within its ordinary limits.
+- A sender that doesn't sign its MIME headers (many don't) leaves one gap: someone who relays a genuine email can change how its signed body is decoded, though not add words to it.
 - Like CaMeL, this trades some automation for safety: an amount from a new or untrusted source waits for the owner.
 - The planner must receive the owner's own words. If an owner pastes an email into the request, its text becomes owner-origin. Forward documents as documents.
 - Amounts and recipients of payments that are made are public on NEAR, as on any public chain.

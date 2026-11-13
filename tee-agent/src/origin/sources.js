@@ -4,10 +4,16 @@
 //   signature that verifies and whose domain matches the From domain (the
 //   sender's domain vouched for the exact bytes). Anything else is
 //   "email:unverified", which the contract refuses to let an owner trust.
-// web: the source is "web:<host>" for an https page (TLS vouches for the host).
+//   Only what that signature covers is vouched for, so a message also counts
+//   as unverified when it has a From, Subject or MIME header the signature
+//   does not cover (someone can add one to a genuine message), or when the
+//   signature covers only part of the body (the l= tag).
+// web: the source is "web:<host>" for an https page (TLS vouches for the
+//   host), where the host is the one that actually served the page after
+//   any redirects.
 // doc: a file handed to the agent, labelled "doc:<name>".
 import { dkimVerify } from 'mailauth';
-import { fromSource } from './labels.js';
+import { fromSource, sha256 } from './labels.js';
 
 const MAX_DOC = 200_000;
 
@@ -16,11 +22,15 @@ function splitMessage(raw) {
   const head = i < 0 ? raw : raw.slice(0, i);
   const body = i < 0 ? '' : raw.slice(i).replace(/^\r?\n\r?\n/, '');
   const headers = {};
+  const counts = {};
   for (const line of head.replace(/\r?\n[ \t]+/g, ' ').split(/\r?\n/)) {
     const m = /^([!-9;-~]+):\s*(.*)$/.exec(line);
-    if (m) headers[m[1].toLowerCase()] ??= m[2];
+    if (!m) continue;
+    const name = m[1].toLowerCase();
+    headers[name] ??= m[2];
+    counts[name] = (counts[name] ?? 0) + 1;
   }
-  return { headers, body };
+  return { headers, body, counts };
 }
 
 function decodeBody(headers, body) {
@@ -43,35 +53,73 @@ function decodeBody(headers, body) {
 
 const addressDomain = (from) => /@([A-Za-z0-9.-]+)>?\s*$/.exec(from ?? '')?.[1]?.toLowerCase() ?? null;
 
+/** How many instances of each header a DKIM signature covers (its h= list). */
+function signedCounts(result) {
+  const out = {};
+  for (const name of String(result.signingHeaders?.keys ?? '').split(':')) {
+    const n = name.trim().toLowerCase();
+    if (n) out[n] = (out[n] ?? 0) + 1;
+  }
+  return out;
+}
+
+/**
+ * Does this passing signature vouch for everything the document is built
+ * from? DKIM checks the headers named in h=, from the bottom up, and the
+ * body. A header added on top of a genuine message is not covered, and with
+ * an l= tag neither is anything appended to the body.
+ */
+function coversDocument(result, counts) {
+  if (result.canonBodyLengthLimited) return false;
+  const signed = signedCounts(result);
+  // Exactly one From, and it is signed.
+  if (counts.from !== 1 || !signed.from) return false;
+  // Every Subject present is signed (an unsigned Subject is left out below).
+  if (signed.subject && (counts.subject ?? 0) > signed.subject) return false;
+  // MIME headers decide how the signed body is read. Many senders don't sign
+  // them, so one unsigned instance is accepted; a second one is not.
+  for (const h of ['content-type', 'content-transfer-encoding']) {
+    if ((counts[h] ?? 0) > Math.max(signed[h] ?? 0, 1)) return false;
+  }
+  return true;
+}
+
 /**
  * An email document. `resolver` is a DNS TXT resolver for DKIM keys; the
- * default is real DNS. Returns { kind, source, label, text, from, verified }.
+ * default is real DNS. Returns { kind, source, label, text, from, verified,
+ * identity }. `identity` is the same for every copy of one signed message
+ * (it is taken from the DKIM signature), so a payment can be tied to the
+ * invoice and not to the bytes of one copy.
  */
 export async function emailDocument(raw, { resolver } = {}) {
   if (raw.length > MAX_DOC) throw new Error('email too large');
-  const { headers, body } = splitMessage(raw);
+  const { headers, body, counts } = splitMessage(raw);
   const fromDomain = addressDomain(headers.from);
   let verified = null;
+  let ok = null;
   try {
     const r = await dkimVerify(raw, resolver ? { resolver } : {});
-    const ok = (r.results ?? []).find((x) => x.status?.result === 'pass' && x.signingDomain && fromDomain
-      && (fromDomain === x.signingDomain.toLowerCase() || fromDomain.endsWith(`.${x.signingDomain.toLowerCase()}`)));
+    ok = (r.results ?? []).find((x) => x.status?.result === 'pass' && x.signingDomain && fromDomain
+      && (fromDomain === x.signingDomain.toLowerCase() || fromDomain.endsWith(`.${x.signingDomain.toLowerCase()}`))
+      && coversDocument(x, counts)) ?? null;
     verified = ok ? ok.signingDomain.toLowerCase() : null;
   } catch {
     verified = null;
   }
   const source = verified ? `email:${verified}` : 'email:unverified';
-  const subject = headers.subject ?? '';
+  // A Subject the signature doesn't cover is not the sender's word.
+  const subject = verified && !signedCounts(ok).subject ? '' : headers.subject ?? '';
+  const identity = verified ? sha256(`dkim:${verified}:${ok.selector ?? ''}:${ok.signature}`) : sha256(raw);
   return {
     kind: 'email',
     source,
-    label: fromSource(source, raw),
+    label: fromSource(source, raw, identity),
     from: headers.from ?? '',
     verified: Boolean(verified),
+    identity,
     text: `Subject: ${subject}\nFrom: ${headers.from ?? ''}\n\n${decodeBody(headers, body)}`.slice(0, 20_000),
   };
 }
-
 const htmlToText = (html) =>
   html
     .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')
@@ -88,9 +136,14 @@ export async function webDocument(url, { fetchImpl = fetch } = {}) {
   const local = u.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(u.hostname);
   if (u.protocol !== 'https:' && !local) throw new Error('only https pages');
   const r = await fetchImpl(url);
+  // After a redirect the page belongs to the host that served it, not the
+  // host that was asked.
+  const served = r.url ? new URL(r.url) : u;
+  const servedLocal = served.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(served.hostname);
+  if (served.protocol !== 'https:' && !servedLocal) throw new Error('only https pages');
   const html = (await r.text()).slice(0, MAX_DOC);
-  const source = `web:${u.hostname.toLowerCase()}`;
-  return { kind: 'web', source, label: fromSource(source, html), from: u.hostname, verified: !local, text: htmlToText(html).slice(0, 20_000) };
+  const source = `web:${served.hostname.toLowerCase()}`;
+  return { kind: 'web', source, label: fromSource(source, html), from: served.hostname, verified: !servedLocal, text: htmlToText(html).slice(0, 20_000) };
 }
 
 /** Any other file, e.g. a PDF's text the owner forwarded. */

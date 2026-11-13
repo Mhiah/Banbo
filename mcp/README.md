@@ -20,6 +20,8 @@ Every answer says what the contract did, in words: "Paid … The network confirm
 
 - **Amount:** the server checks the email's DKIM signature itself. The amount is labelled `email:<domain>` only if the signature verifies and its domain matches the From address; otherwise `email:unverified`. The amount must be written in the email, or nothing is sent.
 - **Recipient:** labelled as the owner's only if the owner listed it as one of the mandate's payees. Anything else is labelled as coming from the email, and the contract refuses it.
+- **Signature coverage:** a header added on top of a genuine email (a second Subject, From or Content-Type) or text appended after a signature that uses `l=` is not the sender's word, so the email is labelled `email:unverified`.
+- **Once per invoice:** the server derives the request id from the mandate, the email's DKIM signature and the recipient, so the model cannot choose it. One email pays one recipient at most once per mandate, even if it is forwarded again.
 
 A forged "corrected invoice" from a lookalike domain is therefore held for the owner with the email's sha256, and a "pay our partner instead" redirect is refused, whatever the model was talked into.
 

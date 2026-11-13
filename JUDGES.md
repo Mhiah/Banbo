@@ -49,7 +49,7 @@ Act 2 is the crude version (an invoice with hidden instructions to send 9 NEAR t
 
 | Claim | Where to look | How to check |
 |---|---|---|
-| The contract, not the agent, makes the origin decision | `contract/src/lib.rs` (`request_payment`, task and origin checks) | `make test-contract` (131 vault + 7 factory unit tests) |
+| The contract, not the agent, makes the origin decision | `contract/src/lib.rs` (`request_payment`, task and origin checks) | `make test-contract` (135 vault + 7 factory unit tests) |
 | The agent can't move money any other way | Its key is a function-call access key for `request_payment` only | `make test-sandbox`: an agent with only that key fails to transfer NEAR or call admin methods |
 | A failed transfer is refunded exactly once | `on_payout` callback | `make test-sandbox` (a real failed transfer on the local node), Act 3 |
 | The model can't fake an origin label | `mcp/` derives labels itself (DKIM check, amount must appear in the signed email) | `make test-mcp` |

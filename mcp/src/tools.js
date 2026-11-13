@@ -11,7 +11,7 @@ import crypto from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { emailDocument } from '../../tee-agent/src/origin/sources.js';
-import { OWNER, toContract } from '../../tee-agent/src/origin/labels.js';
+import { OWNER, toContract, documentPaymentId } from '../../tee-agent/src/origin/labels.js';
 import { parseUnits, formatUnits, amountsIn } from './units.js';
 import { explain, STATUS } from './reasons.js';
 
@@ -157,17 +157,16 @@ export function createServer({ vault, salts = {}, dkimResolver } = {}) {
 
   server.registerTool('banbo_pay_invoice', {
     title: 'Pay an emailed invoice under a task mandate',
-    description: 'Pay an invoice that arrived by email, under a task mandate the owner created. Pass the complete raw email (headers and body, as downloaded, so its DKIM signature can be checked) and the amount to pay. The server labels where the recipient and amount came from (you cannot set the labels): the amount must appear in the email, and it counts as coming from the sender\'s domain only if the DKIM signature verifies. The vault then pays, holds the payment for the owner, or refuses it.',
+    description: 'Pay an invoice that arrived by email, under a task mandate the owner created. Pass the complete raw email (headers and body, as downloaded, so its DKIM signature can be checked) and the amount to pay. The server labels where the recipient and amount came from (you cannot set the labels): the amount must appear in the email, and it counts as coming from the sender\'s domain only if the DKIM signature verifies. The vault then pays, holds the payment for the owner, or refuses it. One email pays one recipient at most once per mandate: sending the same invoice again does not pay again.',
     inputSchema: {
       mandate_id: z.string().min(1).max(64).describe('The mandate id from banbo_list_mandates'),
       email: z.string().min(20).max(200_000).describe('The complete raw email source (RFC 5322), including the DKIM-Signature header'),
       amount: z.string().max(40).describe('The amount to pay as written in the email, e.g. "0.30"'),
       recipient: z.string().min(2).max(64).optional().describe('One of the mandate\'s payees; defaults to the mandate\'s only payee'),
       memo: z.string().max(200).optional().describe('Short note for the owner, e.g. the invoice number'),
-      request_id: z.string().regex(REQUEST_ID).optional().describe('Your id for this payment, to retry safely; one is generated if omitted'),
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
-  }, async ({ mandate_id, email, amount, recipient, memo = '', request_id }) => {
+  }, async ({ mandate_id, email, amount, recipient, memo = '' }) => {
     try {
       const task = await vault.view('get_task', { id: mandate_id });
       if (!task) return fail(`Not sent: there is no task mandate "${mandate_id}". See banbo_list_mandates.`);
@@ -188,8 +187,17 @@ export function createServer({ vault, salts = {}, dkimResolver } = {}) {
         recipient: toContract(task.payees.includes(to) ? OWNER : doc.label),
         amount: toContract(doc.label),
       };
+      // The id comes from the email itself, never from the model, so the
+      // vault's exactly-once rule stops the same invoice being paid twice.
+      // A payment that failed or expired moved no money and may be retried.
+      let requestId = documentPaymentId('inv', mandate_id, doc.label, to);
+      for (let retry = 1; retry <= 3; retry++) {
+        const prev = await vault.view('get_request', { key: `${me}:${requestId}` });
+        if (!prev || !['Failed', 'Expired'].includes(prev.status)) break;
+        requestId = `${documentPaymentId('inv', mandate_id, doc.label, to)}-r${retry}`;
+      }
       const res = await pay(vault, {
-        requestId: request_id ?? newRequestId(), recipient: to, amount: units, token: asset.token, memo, origin,
+        requestId, recipient: to, amount: units, token: asset.token, memo, origin,
         recipientSalt: salts[to] ?? null,
       }, asset);
       const note = `Email sender: ${doc.verified ? `${doc.source.slice('email:'.length)} (DKIM verified)` : 'not verified (no valid DKIM signature matching the From address)'}; sha256 ${doc.label.digest}.`;
